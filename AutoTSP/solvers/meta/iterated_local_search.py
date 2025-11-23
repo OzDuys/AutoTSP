@@ -17,7 +17,7 @@ from AutoTSP.utils.taxonomy import AlgorithmFamily
 class IteratedLocalSearchSolver(BaseSolver):
     name = "iterated_local_search"
     family = AlgorithmFamily.METAHEURISTIC
-    supports_directed = False
+    supports_directed = True
 
     def solve(
         self,

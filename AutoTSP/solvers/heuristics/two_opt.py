@@ -17,7 +17,7 @@ from AutoTSP.utils.taxonomy import AlgorithmFamily
 class TwoOptSolver(BaseSolver):
     name = "two_opt"
     family = AlgorithmFamily.HEURISTIC
-    supports_directed = False
+    supports_directed = True
 
     def solve(self, graph: np.ndarray, time_limit: float = 5.0, max_iterations: int = 1000) -> AlgorithmResult:
         dist_matrix = np.asarray(graph, dtype=float)

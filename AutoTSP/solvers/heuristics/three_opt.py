@@ -17,7 +17,7 @@ from AutoTSP.utils.taxonomy import AlgorithmFamily
 class ThreeOptSolver(BaseSolver):
     name = "three_opt"
     family = AlgorithmFamily.HEURISTIC
-    supports_directed = False
+    supports_directed = True
 
     def solve(self, graph: np.ndarray, time_limit: float = 5.0, max_iterations: int = 200) -> AlgorithmResult:
         dist_matrix = np.asarray(graph, dtype=float)

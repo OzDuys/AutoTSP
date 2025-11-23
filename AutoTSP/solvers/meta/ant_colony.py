@@ -19,7 +19,7 @@ from AutoTSP.utils.taxonomy import AlgorithmFamily
 class AntColonySolver(BaseSolver):
     name = "ant_colony"
     family = AlgorithmFamily.METAHEURISTIC
-    supports_directed = False
+    supports_directed = True
 
     def solve(
         self,
@@ -102,8 +102,8 @@ class AntColonySolver(BaseSolver):
                     for i in range(len(path)):
                         a = path[i]
                         b = path[(i + 1) % len(path)]
+                        # For directed graphs, reinforce the forward direction only.
                         pheromone[a, b] += deposit
-                        pheromone[b, a] += deposit
                 if current_time() - start_time >= time_limit:
                     break
         except TimeLimitExpired:
