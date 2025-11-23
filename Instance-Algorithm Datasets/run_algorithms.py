@@ -267,32 +267,60 @@ def main(raw_args: Iterable[str] | None = None) -> int:
 
     selected_algorithms = args.algorithms or list(ALGORITHMS.keys())
     existing = load_existing_results(args.results)
-    infeasible_thresholds: dict[str, int] = {}
+    # Track per-algorithm buckets: if an entire city-count bucket was infeasible, skip larger buckets.
+    existing_bucket_counts: dict[tuple[str, int], dict[str, int]] = {}
     for (pid, algo_name), record in existing.items():
-        status = record.get("status")
-        reason = record.get("reason")
+        num_cities = record.get("num_cities")
+        if not isinstance(num_cities, int):
+            continue
         spec = ALGORITHM_SPECS.get(algo_name)
         family_attr = getattr(spec, "family", None) if spec else None
         family_name = family_attr.value if hasattr(family_attr, "value") else str(family_attr).lower()
-        # Only record thresholds for non-metaheuristic algorithms; heuristics/metaheuristics can still be useful at larger sizes.
-        if status == "infeasible" and reason in {"timeout", "memory_limit_exceeded"}:
-            if family_name in {"metaheuristic", "heuristic"}:
-                continue
-            num_cities = record.get("num_cities")
-            if isinstance(num_cities, int):
-                infeasible_thresholds[algo_name] = min(
-                    infeasible_thresholds.get(algo_name, num_cities), num_cities
-                )
+        if family_name in {"metaheuristic", "heuristic"}:
+            continue
+        key = (algo_name, num_cities)
+        bucket = existing_bucket_counts.setdefault(key, {"total": 0, "success": 0})
+        bucket["total"] += 1
+        if record.get("status") == "complete":
+            bucket["success"] += 1
+
+    infeasible_thresholds: dict[str, int] = {}
+    for (algo_name, nc), counts in existing_bucket_counts.items():
+        if counts["total"] > 0 and counts["success"] == 0:
+            current = infeasible_thresholds.get(algo_name)
+            infeasible_thresholds[algo_name] = nc if current is None else min(current, nc)
     appended = 0
     reused = 0
     args.results.parent.mkdir(parents=True, exist_ok=True)
     memory_bytes = int(args.memory_limit * 1024 * 1024) if args.memory_limit else None
     iteration_tracker: dict[tuple[str, int], int] = {}
+    current_bucket_size: int | None = None
+    bucket_counts: dict[str, dict[str, int]] = {}
+
+    def finalize_bucket(bucket_size: int | None) -> None:
+        """If a bucket saw only infeasible results for an algorithm, set a skip threshold."""
+        if bucket_size is None:
+            return
+        for algo_name, counts in bucket_counts.items():
+            spec = ALGORITHM_SPECS.get(algo_name)
+            family_attr = getattr(spec, "family", None) if spec else None
+            family_name = family_attr.value if hasattr(family_attr, "value") else str(family_attr).lower()
+            if family_name in {"metaheuristic", "heuristic"}:
+                continue
+            total = counts.get("total", 0)
+            success = counts.get("success", 0)
+            if total > 0 and success == 0:
+                prev = infeasible_thresholds.get(algo_name)
+                infeasible_thresholds[algo_name] = bucket_size if prev is None else min(prev, bucket_size)
 
     with args.results.open("a", encoding="utf-8") as out:
         for problem in iter_jsonl(args.problems):
             problem_id = ensure_problem_id(problem)
             num_cities = problem.get("num_cities")
+            if isinstance(num_cities, int) and num_cities != current_bucket_size:
+                finalize_bucket(current_bucket_size)
+                bucket_counts = {}
+                current_bucket_size = num_cities
             problem_type = problem.get("problem_type", "unknown")
             iteration_idx: int | None = None
             if isinstance(num_cities, int):
@@ -323,7 +351,7 @@ def main(raw_args: Iterable[str] | None = None) -> int:
                     record.update(
                         {
                             "status": "infeasible",
-                            "reason": "prior_infeasible_smaller_instance",
+                            "reason": "prior_infeasible_bucket",
                         }
                     )
                     out.write(json.dumps(to_jsonable(record)))
@@ -359,16 +387,17 @@ def main(raw_args: Iterable[str] | None = None) -> int:
                 else:
                     record = base_record(problem, algo_name)
                     record.update(failure or {"status": "infeasible", "reason": "unknown_failure"})
-                if record.get("status") != "infeasible":
-                    record["status"] = record.get("status", "complete")
-                else:
-                    nc = record.get("num_cities")
-                    if isinstance(nc, int):
-                        reason = record.get("reason")
-                        if reason in {"timeout", "memory_limit_exceeded"}:
-                            prev = infeasible_thresholds.get(algo_name)
-                            if prev is None or nc < prev:
-                                infeasible_thresholds[algo_name] = nc
+                status_val = record.get("status")
+                is_infeasible = status_val == "infeasible"
+                if not is_infeasible:
+                    record["status"] = status_val or "complete"
+                success = record.get("status") == "complete"
+                # Track bucket stats for skipping only when an entire bucket failed.
+                if isinstance(num_cities, int):
+                    stats = bucket_counts.setdefault(algo_name, {"total": 0, "success": 0})
+                    stats["total"] += 1
+                    if success:
+                        stats["success"] += 1
                 out.write(json.dumps(to_jsonable(record)))
                 out.write("\n")
                 existing[key] = record
