@@ -3,5 +3,5 @@ networkx
 numpy
 pandas
 seaborn
-'pyconcorde @ git+https://github.com/jvkersch/pyconcorde'
+pyconcorde @ git+https://github.com/jvkersch/pyconcorde
 scikit-learn
