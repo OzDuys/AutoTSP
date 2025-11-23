@@ -1,0 +1,51 @@
+{
+  "count": 1004,
+  "num_cities": {
+    "min": 5,
+    "max": 1904711,
+    "median": 102.0,
+    "mean": 6343.1065737051795,
+    "p10": 20.0,
+    "p90": 4445.700000000003,
+    "count": 1004
+  },
+  "metrics": {
+    "explicit": 442,
+    "euclidean": 466,
+    "manhattan": 48,
+    "asymmetric": 24,
+    "asymmetric_euclidean": 24
+  },
+  "origins": {
+    "matrix_file": 425,
+    "tsplib": 243,
+    "synthetic": 336
+  },
+  "problem_types": {
+    "matrix_explicit": 425,
+    "tsplib_euc_2d": 208,
+    "tsplib_geom": 2,
+    "tsplib_geo": 10,
+    "tsplib_att": 2,
+    "tsplib_explicit": 17,
+    "tsplib_ceil_2d": 4,
+    "uniform_euclidean": 24,
+    "clustered_euclidean": 24,
+    "grid_euclidean": 24,
+    "circular_euclidean": 24,
+    "uniform_manhattan": 24,
+    "rotated_grid_euclidean": 24,
+    "ring_clusters": 24,
+    "corridor_euclidean": 24,
+    "clustered_outliers": 24,
+    "anisotropic_euclidean": 24,
+    "noisy_euclidean": 24,
+    "noisy_manhattan": 24,
+    "asymmetric_random": 24,
+    "directed_euclidean_skew": 24
+  },
+  "directed": {
+    "true": 473,
+    "false": 531
+  }
+}

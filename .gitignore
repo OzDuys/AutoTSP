@@ -123,5 +123,5 @@ dmypy.json
 *.sav
 
 # Dataset
-Instance Datasets/datasets/
+Data/Instance Datasets/External TSP datasets
 Instance Datasets/problems.jsonl
