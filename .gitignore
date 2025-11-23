@@ -115,3 +115,12 @@ dmypy.json
 
 # macOS
 .DS_Store
+
+# files from pyconcorde
+*.res
+*.sol
+*.pul
+*.sav
+
+# Dataset
+Instance Datasets/datasets/

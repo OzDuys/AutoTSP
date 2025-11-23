@@ -1,0 +1,1089 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{dsfont}
+\usepackage{bm}
+\usepackage{standalone}
+\usepackage{parskip}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage{subcaption}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{tikz}
+\usepackage{cleveref}
+\usepackage{graphicx}
+\usepackage{bm}
+\usepackage{amsthm}
+\usepackage{booktabs}
+
+\newtheorem{definition}{Definition}
+
+\usepackage[backend=biber,style=numeric,sorting=none]{biblatex}
+\addbibresource{references.bib}
+
+\usetikzlibrary{shapes.geometric, arrows, positioning, calc}
+\usetikzlibrary{trees}
+\usetikzlibrary{arrows.meta, positioning}
+
+\geometry{a4paper, margin=1in}
+
+\title{AutoTSP: Per-Instance Algorithm Selection for the Traveling Salesman Problem}
+\author{Oscar Duys\thanks{Experimental code: \url{https://github.com/OzDuys/AutoTSP}}}
+\date{November 2025}
+
+\begin{document}
+
+\maketitle
+\vspace{2em}
+\begin{center}
+    \includegraphics[width=0.45\linewidth]{UCT Logo.png}
+\end{center}
+\vspace{2em}
+
+\begin{abstract}
+% High-level motivation: TSP, algorithmic diversity, and the need for per-instance algorithm selection. 
+% Briefly state: (i) problem, (ii) approach, (iii) key findings, (iv) contributions.
+\end{abstract}
+
+\newpage
+
+\tableofcontents
+
+\newpage
+\section{Introduction}
+% Explain how i started initially by just running various tsp algorithms on a syntehtic dataset of tsp probhlems when i realised how different the pareto forntiers are for different city counts.
+% This huge difference made me think about whether there is a way tio autonaticaaly slect the best algorithm ensuring its poareto efficent given certain constraints.
+
+
+% Conceptually, AutoTSP is related to ideas from AutoML and meta-learning: instead of fixing a single solver, we use data from past runs to choose a solver per instance. However, AutoTSP is much more focused: it targets a single combinatorial problem (TSP) and selects from a small portfolio of pre-defined algorithms, rather than searching over full machine learning pipelines and hyperparameters.
+
+% This is an NP hard problem
+
+% The search spaces scales in ...  with city size.
+% There are 5040 routes between 8 cities
+
+% Why is this problem relevant
+% Explain how its not necessarily directly pplicableexcept in a few instances but it can be a testbed and allow for theoretical exploration.
+
+
+
+
+
+
+
+
+
+
+
+
+
+\newpage
+\section{Background and Preliminaries}
+\label{sec:background}
+
+\subsection{The Traveling Salesman Problem}
+
+The Traveling Salesman Problem (TSP) is a classical combinatorial optimisation problem.  
+Given a set of locations and the cost of travelling between every pair of them, the goal is to find the cheapest possible tour that visits each location exactly once and returns to the starting point.
+
+A standard formalisation uses a complete weighted graph. Let
+\[
+G = (V, E)
+\]
+be a complete graph with vertex set \(V = \{1, 2, \dots, n\}\) and edge set
+\(
+E = \{(i,j) : i,j \in V,\, i \neq j\}.
+\)
+Each edge \((i,j)\) has an associated non-negative cost \(c_{ij} \geq 0\), which might represent distance, time, or some other travel cost.
+
+\begin{definition}[Traveling Salesman Problem]
+Given a complete weighted graph \(G = (V, E)\) with edge costs \(c_{ij} \geq 0\), the Traveling Salesman Problem is to find a permutation \(\pi\) of \(\{1,\dots,n\}\) that minimises the total tour cost
+\[
+    C(\pi) 
+    = 
+    c_{\pi(n)\,\pi(1)}
+    + 
+    \sum_{k=1}^{n-1} c_{\pi(k)\,\pi(k+1)} ,
+\]
+that is, the cost of visiting the vertices in the order \(\pi(1), \pi(2), \dots, \pi(n)\) and then returning from \(\pi(n)\) to \(\pi(1)\).
+\end{definition}
+
+This is an optimisation version of the problem; there is also a decision version that asks whether there exists a tour with cost at most a given bound \(B\). The decision version of TSP is well known to be NP-complete, and the optimisation version is NP-hard. In practice this means that, in the worst case, we cannot expect to solve large instances exactly using algorithms whose running time grows only polynomially with \(n\), unless P = NP.
+
+Despite this worst-case hardness, many TSP instances that arise in applications have additional structure. For example, the vertices may correspond to points in the Euclidean plane, and the costs may satisfy symmetry and the triangle inequality. Such structure often makes instances easier to solve in practice and is central to understanding which algorithms work well on which kinds of TSP instances.
+
+\subsection{Variants and Practical Applications}
+
+There are many variants of the TSP, and the choice of variant depends on the underlying application and constraints.
+
+\paragraph{Symmetric vs asymmetric TSP.}
+In the \emph{symmetric} TSP (STSP), the cost of travelling from \(i\) to \(j\) is the same as from \(j\) to \(i\), so \(c_{ij} = c_{ji}\) for all \(i,j\). This is a natural model when travel costs are distances along undirected roads or cables.
+
+In the \emph{asymmetric} TSP (ATSP), edge costs may differ in each direction, so in general \(c_{ij} \neq c_{ji}\). This appears in applications such as one-way street networks, different uphill vs downhill travel times, or situations where the cost depends on direction (e.g.\ prevailing winds, currents, or asymmetric processing times).
+
+\paragraph{Metric and Euclidean TSP.}
+A common and important special case is the \emph{metric} TSP, where costs satisfy the triangle inequality
+\[
+    c_{ij} \leq c_{ik} + c_{kj} \quad \text{for all } i,j,k \in V.
+\]
+Metric TSP models situations where detours cannot be cheaper than direct travel, and many approximation algorithms rely on this property.
+
+The \emph{Euclidean} TSP is a specific metric case where each vertex is a point in \(\mathbb{R}^d\) (often \(d = 2\) or \(3\)), and costs are Euclidean distances between points. Euclidean instances arise naturally in routing and layout problems and are often used as benchmark instances.
+
+\paragraph{Constrained TSP variants.}
+In many real-world problems, additional constraints are imposed on tours. Examples include:
+\begin{itemize}[noitemsep,topsep=0.5em]
+    \item \textbf{Time windows:} each vertex must be visited within a specified time interval.
+    \item \textbf{Capacity constraints:} the tour is coupled with delivery or pickup quantities, leading to vehicle routing problems.
+    \item \textbf{Prize-collecting or orienteering variants:} not all vertices must be visited; instead, the goal is to collect as much reward as possible within a budget.
+\end{itemize}
+These extensions are often more realistic but also more challenging to solve.
+
+\paragraph{Practical applications.}
+The TSP and its variants appear in a wide range of applications, including:
+\begin{itemize}[noitemsep,topsep=0.5em]
+    \item \textbf{Logistics and transportation:} planning delivery routes for vehicles, visiting customers or depots efficiently.
+    \item \textbf{Manufacturing:} optimising the order of drilling holes on printed circuit boards or machining operations to reduce tool travel.
+    \item \textbf{Robotics and inspection:} planning paths for drones, robots, or inspection devices that must visit a set of locations.
+    \item \textbf{Data analysis and layout:} ordering tasks or objects to minimise transition costs, or arranging items in a linear order that preserves spatial or similarity relationships.
+\end{itemize}
+
+In this thesis, the primary focus will be on (state the precise variant you will work with, e.g.\ symmetric Euclidean TSP with non-negative edge weights). This choice keeps the setting concrete while still being rich enough to exhibit diverse algorithmic behaviour across different instance families.
+
+
+\subsection{Non-Linear and Combinatorial Optimisation Viewpoint}
+
+At a high level, an optimisation problem can be written as
+\[
+    \min_{x \in \mathcal{X}} f(x),
+\]
+where \(f : \mathcal{X} \to \mathbb{R}\) is an objective function and \(\mathcal{X}\) is a set of feasible solutions.  
+In continuous optimisation, \(\mathcal{X}\) is typically a subset of \(\mathbb{R}^n\), and much of the theory is built around convexity and differentiability.
+
+The TSP fits naturally into the framework of \emph{combinatorial optimisation}. Here the feasible set \(\mathcal{X}\) is discrete: each feasible solution is a tour, which can be represented as a permutation of the vertex set or as a \(0\text{--}1\) incidence vector on the edges. The number of feasible tours grows factorially with the number of vertices, and there is no useful notion of a gradient on this space.
+
+One convenient mathematical encoding introduces binary decision variables \(x_{ij} \in \{0,1\}\), where \(x_{ij} = 1\) means that edge \((i,j)\) is used in the tour and \(x_{ij} = 0\) otherwise. The objective can then be written as a linear function
+\[
+    \min_{x} \sum_{(i,j) \in E} c_{ij} x_{ij}
+\]
+subject to a collection of combinatorial constraints that enforce the tour structure (degree constraints and subtour elimination constraints). The objective is linear, but the feasible set defined by these constraints and integrality requirements is highly non-convex. If integrality is relaxed to \(x_{ij} \in [0,1]\), the problem becomes a linear program, but its solutions are in general fractional and do not directly correspond to valid tours.
+
+From the viewpoint of non-linear optimisation, the TSP is therefore a problem with a non-convex feasible region and many local optima when viewed in the natural discrete search space. This is one of the reasons why standard gradient-based methods are not directly applicable, and why specialised exact algorithms and heuristics have been developed for TSP and related combinatorial problems.
+
+
+\subsection{Multi-Objective Optimisation and Pareto Efficiency}
+
+In this thesis, algorithms are not judged only by solution quality, but also by their computational cost. This leads to a \emph{multi-objective} viewpoint: instead of a single objective function, we consider several objectives simultaneously.
+
+A general multi-objective optimisation problem can be written as
+\[
+    \min_{x \in \mathcal{X}} F(x)
+    \quad \text{with} \quad
+    F(x) = \big(f_1(x), f_2(x), \dots, f_m(x)\big),
+\]
+where each \(f_k\) measures a different criterion. In our setting, two natural objectives are
+\begin{itemize}[noitemsep,topsep=0.5em]
+    \item solution quality (for example, tour length or relative optimality gap), and
+    \item computational cost (for example, runtime or number of evaluations).
+\end{itemize}
+
+Because these objectives often conflict, there is usually no single solution that is best in all respects. Instead, we use the notion of Pareto efficiency to compare solutions.
+
+\begin{definition}[Pareto dominance and Pareto optimality]
+Let \(F(x) = (f_1(x), \dots, f_m(x))\) be a vector of objectives to be minimised.  
+A solution \(x\) is said to \emph{Pareto-dominate} a solution \(y\) if
+\[
+    f_k(x) \leq f_k(y) \quad \text{for all } k
+    \quad \text{and} \quad
+    f_k(x) < f_k(y) \text{ for at least one } k.
+\]
+A solution \(x^\star\) is \emph{Pareto-optimal} if there is no other solution that Pareto-dominates it. The set of all Pareto-optimal solutions is called the \emph{Pareto front}.
+\end{definition}
+
+When we compare TSP algorithms on a given class of instances, each algorithm induces a point in the plane whose coordinates are its typical runtime and typical solution quality. The Pareto front then captures the algorithms that achieve the best trade-offs: moving from one point on the front to another improves one objective only at the expense of worsening another. This perspective will be used throughout the thesis to describe and compare algorithm behaviour.
+
+
+\subsection{Algorithm Selection and Meta-Optimisation}
+
+The large number of available algorithms for TSP, each with different strengths and weaknesses, naturally leads to the question of \emph{algorithm selection}. Rather than committing to a single algorithm for all instances, we would like to choose an algorithm that is well-suited to the specific instance at hand.
+
+Let \(\mathcal{I}\) denote a set of problem instances and \(\mathcal{A}\) a finite portfolio of algorithms.  
+For each instance \(i \in \mathcal{I}\) and algorithm \(a \in \mathcal{A}\), we can measure a performance vector
+\[
+    P(a, i) = \big( f_{\text{qual}}(a, i), f_{\text{time}}(a, i) \big),
+\]
+where \(f_{\text{qual}}\) and \(f_{\text{time}}\) represent solution quality and computational cost. An \emph{algorithm selector} is a rule that, given information about an instance \(i\), chooses an algorithm \(S(i) \in \mathcal{A}\) with the goal of achieving good overall performance across instances.
+
+In practice, the selector usually does not see the instance directly, but only a feature vector \(\phi(i) \in \mathbb{R}^d\) that summarises properties such as problem size, sparsity, or geometric structure. The selection rule can then be viewed as a mapping
+\[
+    S : \mathbb{R}^d \to \mathcal{A}, \qquad S\big(\phi(i)\big) \text{ is the chosen algorithm for instance } i.
+\]
+The quality of a selector is measured by how well it performs, on average, compared to simple baselines such as always using the same algorithm.
+
+This viewpoint is an example of \emph{meta-optimisation}: instead of optimising directly over tours, we optimise over choices of algorithms or strategies that themselves solve optimisation problems. Designing AutoTSP can be seen as constructing and improving such a selector for TSP instances. The rest of the thesis will focus on (i) understanding how algorithm performance varies over different TSP instance families, and (ii) using this understanding to build and evaluate practical selection rules.
+
+\paragraph{Relation to AutoML and algorithm portfolios.}
+The AutoTSP setting is closely related to ideas from AutoML and algorithm portfolios. AutoML systems typically select and configure entire machine learning pipelines (models, hyperparameters, and preprocessing steps) for a given dataset, often by running many candidate pipelines and comparing validation performance. In contrast, AutoTSP operates on a fixed combinatorial problem (the TSP) with a small, predefined portfolio of solvers. For each TSP instance, the selector makes a single, one-shot choice of algorithm from this portfolio, based on inexpensive instance features. In this sense, AutoTSP can be viewed as a \emph{one-choice portfolio optimisation} problem: given a portfolio of algorithms and a distribution of instances, choose a mapping from instance features to a single algorithm that optimises the overall quality--runtime trade-off.
+
+
+
+
+
+
+
+
+
+\newpage
+\section{Algorithms for the Traveling Salesman Problem}
+\label{sec:algorithms}
+
+\subsection{Taxonomy of TSP Algorithms}
+\label{subsec:taxonomy}
+
+There is a wide range of algorithms for solving the TSP, each making different trade-offs between solution quality, runtime, and implementation complexity. A useful high-level classification splits them into two main groups:
+\begin{itemize}[noitemsep,topsep=0.5em]
+    \item \textbf{Exact methods}, which always return an optimal tour (up to numerical issues), but may take exponential time in the worst case.
+    \item \textbf{Heuristic and metaheuristic methods}, which aim to find very good, but not necessarily optimal, tours in reasonable time, especially for large instances.
+\end{itemize}
+
+Within these groups, we can distinguish several families:
+\begin{itemize}[noitemsep,topsep=0.5em]
+    \item \textbf{Dynamic programming methods} that exploit recursive structure.
+    \item \textbf{Integer linear programming and branch-and-bound} methods that search the space of tours using relaxations and bounds.
+    \item \textbf{Constructive heuristics} that build a tour step by step (e.g.\ nearest neighbour).
+    \item \textbf{Local search heuristics} that start from an initial tour and improve it using local modifications (e.g.\ 2-opt, 3-opt).
+    \item \textbf{Metaheuristics} such as simulated annealing, genetic algorithms, and ant colony optimisation, which use higher-level search strategies on top of local moves.
+\end{itemize}
+
+Table~\ref{tab:taxonomy} gives a simple summary of these categories and their typical use.
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{@{}lll@{}}
+        \toprule
+        Category & Guarantee & Typical use \\ \midrule
+        Exact methods & Optimal solution & Small to medium instances, benchmarks \\
+        Constructive heuristics & Feasible, quick & Very large instances, initial solutions \\
+        Local search & High-quality tours & Medium to large instances \\
+        Metaheuristics & Very high-quality tours & Difficult or structured instances \\ \bottomrule
+    \end{tabular}
+    \caption{High-level taxonomy of TSP algorithm families.}
+    \label{tab:taxonomy}
+\end{table}
+
+In the rest of this section we briefly review the main exact and heuristic methods that will be used later in the empirical study and in the design of AutoTSP.
+
+
+\subsection{Exact Methods}
+\label{subsec:exact_methods}
+
+Exact methods aim to find an optimal tour and to certify its optimality. They typically have worst-case exponential running time, but can be very effective on small or moderately sized instances, or on instances with exploitable structure.
+
+Two central ideas appear repeatedly:
+\begin{itemize}[noitemsep,topsep=0.5em]
+    \item \textbf{Dynamic programming}, which uses overlapping subproblems to avoid recomputing similar tours.
+    \item \textbf{Integer linear programming and branch-and-bound}, which relax the problem, compute bounds, and systematically explore the space of tours.
+\end{itemize}
+
+These methods form the backbone of many state-of-the-art TSP solvers. Even when the main focus is on heuristics, exact algorithms are important for providing reference optimal values and for understanding the limits of tractable problem sizes.
+
+\subsubsection{Dynamic Programming Approaches}
+
+A classical dynamic programming algorithm for the TSP is the Bellman--Held--Karp algorithm. It works on the complete graph \(G = (V,E)\) with cost matrix \(c_{ij}\) and uses a DP value
+\[
+    D(S, j)
+\]
+which represents the minimum cost of a path that starts at a fixed depot (say vertex \(1\)), visits all vertices in the subset \(S \subseteq V\) exactly once, and ends at vertex \(j \in S\).
+
+The recursion is
+\[
+    D(S, j)
+    =
+    \min_{i \in S \setminus \{j\}} \big\{ D(S \setminus \{j\}, i) + c_{ij} \big\},
+\]
+with base cases
+\[
+    D(\{1\}, 1) = 0.
+\]
+The optimal tour cost is then obtained by
+\[
+    \min_{j \neq 1} \big\{ D(V, j) + c_{j1} \big\}.
+\]
+
+This algorithm runs in time \(\mathcal{O}(n^2 2^n)\) and space \(\mathcal{O}(n 2^n)\). It is therefore only practical for relatively small numbers of vertices, but it is conceptually simple and useful as a benchmark for optimal solutions on small instances.
+
+\subsubsection{Integer Programming and Branch-and-Bound}
+
+Another powerful approach is to formulate the TSP as an integer linear program (ILP). Using binary variables \(x_{ij} \in \{0,1\}\) to indicate whether edge \((i,j)\) is used in the tour, a basic formulation is
+\begin{align*}
+    \min_{x} \quad & \sum_{(i,j) \in E} c_{ij} x_{ij} \\
+    \text{subject to} \quad
+    & \sum_{j : (i,j) \in E} x_{ij} = 1 \quad \forall i \in V, \\
+    & \sum_{i : (i,j) \in E} x_{ij} = 1 \quad \forall j \in V, \\
+    & \sum_{i,j \in S} x_{ij} \leq |S| - 1 \quad \forall S \subset V,\, S \neq \emptyset, \\
+    & x_{ij} \in \{0,1\} \quad \forall (i,j) \in E.
+\end{align*}
+The degree constraints ensure that each vertex has exactly one incoming and one outgoing edge, while the subtour elimination constraints prevent the solution from breaking into multiple smaller cycles.
+
+In practice, it is not possible to include all subtour elimination constraints explicitly, because there are exponentially many of them. Modern solvers instead use \emph{branch-and-cut}:
+\begin{itemize}[noitemsep,topsep=0.5em]
+    \item Solve a relaxed problem with only a small subset of constraints.
+    \item Analyse the fractional solution to detect violated subtour constraints.
+    \item Add these violated constraints as cuts and re-solve.
+    \item Use branching to enforce integrality when necessary.
+\end{itemize}
+
+This combination of linear programming relaxations, cutting planes, and branch-and-bound is extremely effective on many TSP instances. However, the worst-case running time remains exponential, and performance can vary significantly with problem size and structure. This variability is one of the reasons why algorithm selection, and hence AutoTSP, is a meaningful topic.
+
+\subsection{Heuristic and Metaheuristic Methods}
+\label{subsec:heuristics}
+
+Heuristic and metaheuristic methods do not guarantee optimal solutions, but they are often the only practical option for large TSP instances. They aim to find good tours quickly, making trade-offs between solution quality, runtime, and robustness.
+
+Broadly, we can distinguish three families:
+\begin{itemize}[noitemsep,topsep=0.5em]
+    \item \textbf{Constructive heuristics}, which build a tour step by step.
+    \item \textbf{Local search heuristics}, which start from an initial tour and improve it by local modifications.
+    \item \textbf{Metaheuristics}, which wrap higher-level search strategies around local moves or constructive steps.
+\end{itemize}
+
+In this thesis, these methods play a central role: they form a large part of the algorithm portfolio used in experiments, and their very different performance profiles across instance types motivate the need for algorithm selection.
+
+
+\subsubsection{Constructive Heuristics}
+
+Constructive heuristics start from an empty tour and repeatedly add vertices or edges until a complete tour is formed. They are usually fast and simple to implement, and they often provide good initial tours for later improvement by local search.
+
+A basic example is the \emph{nearest neighbour} heuristic:
+\begin{enumerate}[noitemsep,topsep=0.5em]
+    \item Choose a starting vertex.
+    \item At each step, move to the nearest unvisited vertex.
+    \item Once all vertices have been visited, return to the start.
+\end{enumerate}
+This procedure runs in time \(\mathcal{O}(n^2)\) with a naive implementation and often produces reasonable, but not high-quality, tours.
+
+Insertion heuristics follow a different pattern. They start from a small initial cycle and then insert remaining vertices one by one at positions that cause the least increase in total tour length. Common variants include:
+\begin{itemize}[noitemsep,topsep=0.5em]
+    \item \textbf{Cheapest insertion:} insert the vertex and position that minimise the increase in tour length.
+    \item \textbf{Farthest insertion:} always insert the vertex farthest from the current tour, to quickly cover outliers.
+\end{itemize}
+These heuristics are still relatively cheap to run and usually produce better tours than simple nearest neighbour, making them useful both as standalone methods and as starting points for local search.
+
+
+\subsubsection{Local Search Heuristics}
+
+Local search heuristics start from an initial tour (often produced by a constructive heuristic) and repeatedly apply small modifications that improve the tour. The search space is defined by a \emph{neighbourhood}, which specifies which tours are considered “close” to the current one.
+
+A common family of neighbourhoods is based on edge exchanges:
+\begin{itemize}[noitemsep,topsep=0.5em]
+    \item \textbf{2-opt:} remove two edges and reconnect the tour in the only other way that keeps it a single cycle. This is equivalent to reversing a segment of the tour.
+    \item \textbf{3-opt:} remove three edges and reconnect the three resulting paths in one of several possible ways.
+\end{itemize}
+A simple 2-opt algorithm repeatedly applies the best improving 2-edge swap until no further improvement is possible. This usually runs in polynomial time per iteration but can require many iterations; in practice, variants that limit the set of candidate swaps are used to keep runtimes manageable.
+
+Local search methods often achieve much shorter tours than pure constructive heuristics, especially on Euclidean instances. However, they can get stuck in local minima, where no small modification leads to an improvement. This motivates metaheuristics that allow the search to escape local minima.
+
+
+\subsubsection{Metaheuristics}
+
+Metaheuristics provide general frameworks for exploring the search space in a more global way. They typically rely on local moves like 2-opt but add mechanisms to escape local minima, diversify the search, or intensify it around promising regions.
+
+Common examples for the TSP include:
+\begin{itemize}[noitemsep,topsep=0.5em]
+    \item \textbf{Simulated annealing:} occasionally accepts worse moves according to a temperature parameter that gradually decreases, allowing the search to jump out of local minima early on.
+    \item \textbf{Genetic algorithms:} maintain a population of tours and combine them using crossover and mutation operators, guided by selection based on tour length.
+    \item \textbf{Ant colony optimisation:} models artificial “ants” that construct tours probabilistically, influenced by pheromone trails that encode good edges discovered in previous iterations.
+\end{itemize}
+
+These methods are more complex to tune and implement than basic local search, but they can reach very high-quality tours on difficult instances. They also tend to show strong instance-dependent behaviour, which makes them interesting candidates in an algorithm selection setting.
+
+
+\subsection{Qualitative Comparison}
+\label{subsec:qualitative_comparison}
+
+Exact methods, constructive heuristics, local search, and metaheuristics each have distinct strengths and weaknesses. Table~\ref{tab:qualitative} summarises some typical characteristics.
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{@{}llll@{}}
+        \toprule
+        Family & Runtime (typical) & Solution quality & Notes \\ \midrule
+        Exact (DP, ILP) 
+            & High, exponential & Optimal & Small to medium \(n\), benchmarks \\
+        Constructive heuristics 
+            & Very low & Moderate & Good initial tours, scalable \\
+        Local search (2-opt, 3-opt) 
+            & Low to moderate & High & Sensitive to initial tour and neighbourhood \\
+        Metaheuristics 
+            & Moderate to high & Very high & Many parameters, instance-dependent \\ \bottomrule
+    \end{tabular}
+    \caption{Qualitative comparison of TSP algorithm families.}
+    \label{tab:qualitative}
+\end{table}
+
+These qualitative differences explain why no single method dominates across all instance types and sizes. In later chapters, we will quantify these trade-offs using empirical Pareto curves and use the resulting patterns to design the AutoTSP selection rules.
+
+
+
+
+
+
+
+
+
+
+
+
+\newpage
+\section{Theoretical Motivation for AutoTSP}
+\label{sec:theory}
+
+\subsection{No Free Lunch Theorems for Optimisation}
+\label{subsec:nfl}
+
+The no free lunch (NFL) theorems are a family of results that formalise the idea that, when averaged over all possible optimisation problems, no algorithm is better than any other. In their simplest form, they consider a finite search space \(\mathcal{X}\), a finite set of objective values \(\mathcal{Y}\), and the set \(\mathcal{F} = \{ f : \mathcal{X} \to \mathcal{Y} \}\) of all possible objective functions.
+
+An optimisation algorithm can be seen as a procedure that, at each step, chooses the next point \(x \in \mathcal{X}\) to evaluate based on the history of previously queried points and their values. Its performance on a function \(f\) is measured by some summary of the observed values \(f(x_1), f(x_2), \dots\) after a fixed number of evaluations.
+
+Very roughly, an NFL theorem states that if all functions in \(\mathcal{F}\) are equally likely, then the average performance of any two algorithms is the same. In other words, for a uniform prior over \(\mathcal{F}\),
+\[
+    \mathbb{E}_{f \in \mathcal{F}}\big[ \text{Perf}(A_1, f) \big]
+    =
+    \mathbb{E}_{f \in \mathcal{F}}\big[ \text{Perf}(A_2, f) \big]
+\]
+for any two algorithms \(A_1\) and \(A_2\), where \(\text{Perf}\) is a reasonable performance measure.
+
+This has an important but limited message:
+\begin{itemize}[noitemsep,topsep=0.5em]
+    \item If we know nothing about the structure of the objective functions we face, then no algorithm can be universally better than another.
+    \item In practice, real problems occupy a tiny, structured subset of \(\mathcal{F}\), so some algorithms can perform much better than others on the problems we actually care about.
+\end{itemize}
+
+For the TSP, this suggests that we should not expect a single algorithm to dominate on all instance types. Instead, different algorithms will tend to work well on different families of instances (for example, small versus large, Euclidean versus non-Euclidean, dense versus sparse). This observation motivates the study of \emph{algorithm selection}: rather than searching for one best algorithm, we try to choose an algorithm that is well matched to each instance.
+
+
+\subsection{Algorithm Selection as an Optimisation Problem}
+\label{subsec:alg_sel_problem}
+
+We now formalise the algorithm selection problem that underlies AutoTSP. Let \(\mathcal{I}\) be a set of problem instances (e.g.\ TSP instances), and let \(\mathcal{A} = \{a_1, \dots, a_K\}\) be a finite portfolio of algorithms. For each pair \((a, i) \in \mathcal{A} \times \mathcal{I}\), we can measure a performance vector
+\[
+    P(a, i) = \big( f_{\text{qual}}(a,i),\, f_{\text{time}}(a,i) \big),
+\]
+where \(f_{\text{qual}}\) measures solution quality (e.g.\ tour length or optimality gap) and \(f_{\text{time}}\) measures computational cost (e.g.\ runtime).
+
+An \emph{algorithm selector} is a mapping that, given some information about an instance \(i\), chooses an algorithm from \(\mathcal{A}\). In practice, the selector does not see the full instance directly, but only a feature vector \(\phi(i) \in \mathbb{R}^d\) that encodes properties such as:
+\begin{itemize}[noitemsep,topsep=0.5em]
+    \item number of vertices,
+    \item density or sparsity,
+    \item geometric statistics (for Euclidean TSP),
+    \item presence of particular constraints.
+\end{itemize}
+We can thus model a selector as a function
+\[
+    S : \mathbb{R}^d \to \mathcal{A}, \qquad S\big(\phi(i)\big) \text{ is the chosen algorithm for instance } i.
+\]
+
+To evaluate a selector, we assume a distribution \(\mathcal{D}\) over instances (or over instance families) and define an aggregate performance measure. For example, if we focus on a scalarised objective
+\[
+    g(a,i) = \alpha\, f_{\text{qual}}(a,i) + (1-\alpha)\, f_{\text{time}}(a,i),
+\]
+with a trade-off parameter \(\alpha \in [0,1]\), then the expected performance of selector \(S\) is
+\[
+    \mathcal{L}(S)
+    =
+    \mathbb{E}_{i \sim \mathcal{D}} \big[ g\big(S(\phi(i)), i\big) \big].
+\]
+The algorithm selection problem is to find a selector \(S^\star\) that minimises \(\mathcal{L}(S)\) over some class of selectors (for example, all rule-based selectors of a certain form, or all models within a given machine learning family).
+
+In this sense, designing AutoTSP is itself an optimisation problem defined over the space of selectors. The hand-crafted rule-based selector and the random forest selector used in this thesis are two concrete choices for \(S\). In later chapters we will compare their performance to simple baselines and to an oracle that always chooses the best algorithm for each instance.
+
+
+\subsection{Multi-Objective Trade-offs: Quality vs Runtime}
+\label{subsec:multiobj_tradeoff}
+
+In practice, TSP algorithms are judged on at least two criteria:
+\begin{itemize}[noitemsep,topsep=0.5em]
+    \item \textbf{Solution quality}, for example tour length or relative optimality gap.
+    \item \textbf{Computational cost}, for example runtime or number of evaluations.
+\end{itemize}
+Improving one criterion often worsens the other. An algorithm that explores the search space more thoroughly may find shorter tours, but will usually take longer to run.
+
+Formally, for each algorithm \(a \in \mathcal{A}\) and instance \(i \in \mathcal{I}\) we have a performance vector
+\[
+    P(a,i) = \big(f_{\text{qual}}(a,i), f_{\text{time}}(a,i)\big),
+\]
+with both components to be minimised. When comparing algorithms or selectors, it is therefore not enough to look at a single scalar summary; we should consider the trade-off between quality and runtime.
+
+One way to do this is to impose a \emph{time budget}: fix a maximum allowed runtime \(T\), and compare algorithms only by the quality they achieve within time \(T\). Another is to use a \emph{scalarisation}, combining the objectives into a single score, for example
+\[
+    g(a,i) = \alpha\, f_{\text{qual}}(a,i) + (1-\alpha)\, f_{\text{time}}(a,i),
+\]
+for some \(\alpha \in [0,1]\). Both views are useful in experiments.
+
+At a more structural level, we can consider the set of achievable performance vectors and study its \emph{Pareto front}: the set of algorithms (or selectors) for which no other choice is strictly better in both quality and runtime. This multi-objective viewpoint fits naturally with the AutoTSP goal of choosing algorithms that lie close to the Pareto front for each instance or instance family.
+
+
+\subsection{Problem Formulation for AutoTSP}
+\label{subsec:autotsp_formulation}
+
+We now specialise the general algorithm selection setting to the TSP and define the AutoTSP problem. Recall the portfolio of algorithms \(\mathcal{A} = \{a_1,\dots,a_K\}\) and the set of TSP instances \(\mathcal{I}\). Each instance \(i \in \mathcal{I}\) is mapped to a feature vector \(\phi(i) \in \mathbb{R}^d\). A selector
+\[
+    S : \mathbb{R}^d \to \mathcal{A}
+\]
+chooses an algorithm \(S(\phi(i))\) based on these features.
+
+For a given selector \(S\), the performance on instance \(i\) is captured by
+\[
+    P(S,i) = \big(f_{\text{qual}}(S(\phi(i)), i),\, f_{\text{time}}(S(\phi(i)), i) + f_{\text{sel}}^S(i)\big),
+\]
+where \(f_{\text{sel}}^S(i)\) denotes the computational cost of computing features and making the selection decision. In most practical designs, \(f_{\text{sel}}^S(i)\) should be small compared to the cost of running the chosen algorithm.
+
+To define an optimisation goal, we assume a distribution \(\mathcal{D}\) over instances (or a representative finite set) and either:
+\begin{itemize}[noitemsep,topsep=0.5em]
+    \item fix a time budget \(T\) and minimise expected solution quality subject to \(f_{\text{time}} + f_{\text{sel}}^S \leq T\), or
+    \item use a scalarised objective
+    \(
+        g(S,i) = \alpha\, f_{\text{qual}}(S(\phi(i)), i) + (1-\alpha)\, f_{\text{time}}(S(\phi(i)), i)
+    \)
+    and minimise the expected value
+    \(
+        \mathbb{E}_{i \sim \mathcal{D}}[g(S,i)].
+    \)
+\end{itemize}
+
+The \emph{AutoTSP problem} is then:
+\begin{quote}
+    Given a portfolio \(\mathcal{A}\), an instance feature mapping \(\phi\), and an evaluation scheme as above, find a selector \(S\) within a chosen class (e.g.\ rule-based selectors or random forest models) that achieves the best trade-off between solution quality and runtime over instances drawn from \(\mathcal{D}\).
+\end{quote}
+
+In this thesis we study two concrete classes of selectors:
+\begin{enumerate}[noitemsep,topsep=0.5em]
+    \item a manually designed rule-based selector, and
+    \item a learning-based selector implemented as a random forest.
+\end{enumerate}
+Their performance will be compared against simple baselines (such as always using a single fixed algorithm) and against an oracle that always picks the best algorithm for each instance.
+
+From this viewpoint, the AutoTSP selector does not schedule or combine algorithms; it performs a single portfolio decision: for each instance, pick exactly one algorithm from the portfolio to run. This one-choice portfolio setting is simpler than dynamic portfolio approaches, but fits many practical scenarios and keeps selection overhead small.
+
+
+
+\subsection{Research Questions and Hypotheses}
+\label{subsec:rq_hypotheses}
+
+The AutoTSP problem, as formulated above, leads to a small set of concrete questions. These guide both the design of experiments and the analysis of results.
+
+\paragraph{RQ1: Instance-dependent behaviour of TSP algorithms.}
+\emph{How does the performance of individual TSP algorithms vary across different instance families and instance features?}
+
+This question is about understanding the landscape before attempting any selection. The hypothesis is that:
+\begin{itemize}[noitemsep,topsep=0.5em]
+    \item[\textbf{H1}] No single algorithm in the portfolio is Pareto-dominant across all instance families; instead, different algorithms occupy different parts of the quality--runtime trade-off depending on problem size and structure.
+\end{itemize}
+
+\paragraph{RQ2: Value of per-instance algorithm selection.}
+\emph{Can a simple per-instance selector outperform the best single fixed algorithm, on average, under realistic time budgets?}
+
+Here we compare AutoTSP against baselines such as always using the same algorithm. The main hypothesis is:
+\begin{itemize}[noitemsep,topsep=0.5em]
+    \item[\textbf{H2}] A rule-based selector that chooses algorithms based on a few simple features (such as number of vertices and basic structural statistics) achieves lower average regret to the oracle selector than any single fixed algorithm in the portfolio.
+\end{itemize}
+
+\paragraph{RQ3: Benefit of learning-based selection over manual rules.}
+\emph{Does a learning-based selector (random forest) provide a measurable improvement over a manually designed rule-based selector, once selection overhead is taken into account?}
+
+This question distinguishes between hand-crafted and data-driven selection. The hypothesis is:
+\begin{itemize}[noitemsep,topsep=0.5em]
+    \item[\textbf{H3}] A random forest selector trained on instance features and observed algorithm performance achieves lower average regret than the manual rule-based selector, while incurring negligible additional selection cost.
+\end{itemize}
+
+These research questions structure the rest of the thesis.  
+Chapter~\ref{sec:empirical} addresses \textbf{RQ1} by empirically characterising algorithm performance across instance families.  
+Chapter~\ref{sec:autotp} addresses \textbf{RQ2} and \textbf{RQ3} by constructing the AutoTSP selectors and comparing them to baselines and to an oracle selector.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+\newpage
+\section{Experimental Methodology}
+\label{sec:methodology}
+
+\subsection{Overview of the AutoTSP Pipeline}
+% Provide a high-level description of the end-to-end pipeline.
+% Consider including a TikZ flow diagram:
+%   Instance -> Feature Extraction -> AutoTSP Selector -> Chosen Algorithm -> Solution.
+% Explain where data is collected for analysis and training (if ML is used).
+
+\subsection{Algorithm Portfolio}
+% List and describe the specific algorithms included in the portfolio for experiments.
+% Justify each choice (e.g., representative of a class, widely used, differing trade-offs).
+% Note any implementation details: libraries used, parameter settings, stopping criteria.
+
+\subsection{TSP Instance Families}
+% Describe how TSP instances are generated or selected:
+% - Euclidean random points in the plane.
+% - Clustered vs uniform distributions.
+% - Dense vs sparse graphs (if applicable).
+% - Any real-world benchmark instances.
+% Define the ranges of problem sizes (number of nodes) and other structural properties.
+% Explain how many instances per family are used and why.
+
+\subsection{Dataset: TSP Instance collection}
+
+# Sources
+https://comopt.ifi.uni-heidelberg.de/software/TSPLIB95/
+https://familytsp.campus.ciencias.ulisboa.pt/instances/generated-instances-based-on-symmetric-tsp-instances/
+https://sites.google.com/site/atspinstances/cirasella-instances
+https://lopez-ibanez.eu/tsptw-instances
+https://github.com/mastqe/tsplib
+http://archive.dimacs.rutgers.edu/Challenges/TSP/atsp.html
+https://www.math.uwaterloo.ca/tsp/data/index.html
+
+\subsection{Instance Features}
+\label{subsec:instance-features}
+
+To drive the AutoTSP selector we extract a low–dimensional feature vector
+$\phi(i) \in \mathbb{R}^d$ for each TSP instance $i$. The goal is not to
+encode the full instance in a lossless way, but to capture the coarse
+properties that most strongly influence algorithm performance: size,
+geometry, and metric structure. Feature extraction is implemented in
+\texttt{AutoTSP.features.FeatureExtractor} and is deliberately lightweight so
+that selection overhead remains negligible relative to solver runtimes.
+
+Given an instance $i$ with either an explicit distance matrix or a set of
+2D coordinates, we compute:
+
+\begin{itemize}
+  \item \textbf{Problem size.}
+    The number of cities $n$:
+    \[
+      n(i) = \texttt{n\_nodes} \in \mathbb{N}.
+    \]
+
+  \item \textbf{Metric flag.}
+    A Boolean indicator \texttt{is\_metric} which is \emph{true} if the
+    distance data appear to define a symmetric metric (zero diagonal,
+    approximate symmetry, and no obvious triangle inequality violations),
+    and \emph{false} otherwise. This distinguishes Euclidean / TSPLIB--EUC\_2D
+    instances from arbitrary asymmetric or non–metric distance matrices.
+
+  \item \textbf{Spatial dispersion.}
+    For coordinate–based instances we compute the per–dimension standard
+    deviations
+    \[
+      \texttt{std\_dev\_x},\ \texttt{std\_dev\_y}
+    \]
+    of the city coordinates, as well as the area of the bounding box
+    \[
+      \texttt{bbox\_area} = (\max_x - \min_x)(\max_y - \min_y).
+    \]
+    These quantities reflect how spread out the points are and therefore
+    roughly how long typical edges and tours are.
+
+  \item \textbf{Centroid dispersion.}
+    Let $c$ be the centroid of the coordinates. We compute the mean
+    Euclidean distance from cities to the centroid,
+    \[
+      \texttt{centroid\_dispersion}
+      = \frac{1}{n}\sum_{v} \lVert x_v - c \rVert_2,
+    \]
+    which distinguishes tightly clustered instances from those with
+    widely scattered points.
+
+  \item \textbf{Landmark distance.}
+    We select a random ``landmark'' city and compute the average distance
+    from the landmark to a small random sample of other cities:
+    \[
+      \texttt{landmark\_10\_dist}
+      \approx \frac{1}{k}\sum_{j=1}^k d(\ell, v_j).
+    \]
+    This provides a cheap probe of typical pairwise distances even when
+    only a distance matrix is available.
+
+  \item \textbf{Nearest--neighbour probe.}
+    Finally, we compute
+    \texttt{nn\_probe\_cost} by running a truncated nearest–neighbour
+    heuristic tour on a small subset of the cities (about $10\%$ of $n$).
+    This produces a very fast, coarse estimate of a tour length scale for
+    the instance. It is used both as an informative feature for the
+    selector and as a building block for our evaluation penalty scheme.
+\end{itemize}
+
+For instances that are given only as distance matrices, we compute the
+subset of features that can be derived without coordinates (metric flag,
+landmark distance, nearest–neighbour probe), and set the remaining
+coordinate–based features to \texttt{None}. This keeps feature extraction
+robust across both synthetic geometric instances and real--world TSPLIB
+and matrix–file instances while maintaining a consistent interface for
+the selector.
+
+
+\subsection{Evaluation Metrics}
+\label{subsec:evaluation-metrics}
+
+The goal of the evaluation is to compare different selection policies
+(rule–based, Random Forest, simple baselines) in a way that reflects
+their performance on a \emph{distribution} of instances, rather than on
+hand–picked examples. Importantly, we must account for algorithms that
+time out or fail, not just average over successful runs, otherwise exact
+methods that only solve tiny instances would appear unfairly strong.
+
+\paragraph{Per–instance penalised cost.}
+We fix a per–instance wall–clock budget $T$ (here $T = 5$ seconds). For
+each instance $i$ and algorithm $a$ we consider a single run from the
+benchmark data, with tour cost $q(a,i)$, runtime $t(a,i)$, and status
+(success, timeout, infeasible, etc.). We then define a \emph{penalised
+cost}
+\[
+  \tilde{q}(a,i) =
+  \begin{cases}
+    q(a,i), & \text{if the run succeeds within } T, \\
+    C(i),   & \text{otherwise},
+  \end{cases}
+\]
+where $C(i)$ is an instance–specific penalty that is guaranteed to be
+worse than any reasonable tour on that instance.
+
+To obtain $C(i)$ we construct a per–instance upper bound scale
+$U(i)$ which depends only on the geometry and size of the instance,
+not on how well other algorithms performed:
+
+\begin{itemize}
+  \item \textbf{Nearest–neighbour based bound (default).}
+    We approximate a full–tour upper bound by scaling the cheap nearest–
+    neighbour probe cost. Let $\texttt{nn\_probe\_cost}(i)$ be the cost of
+    the truncated nearest–neighbour tour on a subset of cities, and let
+    $n(i)$ be the number of cities. If the probe visits $k(i)$ cities,
+    we estimate a full tour scale as
+    \[
+      U_{\text{nn}}(i)
+      \approx \texttt{nn\_probe\_cost}(i) \cdot \frac{n(i)}{k(i)}.
+    \]
+
+  \item \textbf{Geometric bound.}
+    As a complementary option, we use a simple geometric upper bound. For
+    coordinate–based instances let $\Delta(i)$ be the diagonal of the
+    bounding box of the coordinates, and for matrix–based instances let
+    $D_{\max}(i)$ be the maximum entry of the distance matrix. Then any
+    tour has length at most $n(i)\Delta(i)$ or $n(i)D_{\max}(i)$,
+    respectively, so we can set
+    \[
+      U_{\text{geom}}(i) = n(i) \cdot \max\{\Delta(i), D_{\max}(i)\}.
+    \]
+\end{itemize}
+
+In both cases we define the failure penalty as
+\[
+  C(i) = \alpha \, U(i),
+\]
+with a fixed factor $\alpha > 1$ (in our experiments $\alpha = 2$).
+Thus, a timeout or infeasible run is treated as substantially worse than
+any realistic successful tour on the same instance. This design ensures
+that algorithms which frequently fail or time out have high average
+penalised cost and cannot appear strong simply because they only solve
+easy instances.
+
+\paragraph{Oracle and baselines.}
+Given $\tilde{q}(a,i)$ for all algorithms $a$ on instance $i$, the
+\emph{oracle} selector chooses the algorithm with minimum penalised cost:
+\[
+  a^\star(i) = \arg\min_{a} \tilde{q}(a,i).
+\]
+This oracle is an upper bound on what any selector operating on the same
+algorithm set can achieve.
+
+We also define a \emph{single best algorithm} (SBA) baseline. For each
+algorithm $a$ we compute its average penalised cost over instances:
+\[
+  \bar{q}(a) = \frac{1}{|I|} \sum_{i \in I} \tilde{q}(a,i),
+\]
+and choose
+\[
+  a_{\text{SBA}} = \arg\min_{a} \bar{q}(a).
+\]
+The SBA policy corresponds to always running $a_{\text{SBA}}$,
+independent of instance features. Because we use the penalised cost
+$\tilde{q}$, algorithms that often fail or exceed the time budget are
+naturally disfavoured.
+
+\paragraph{Selector performance and regret.}
+A selector $S$ maps each instance $i$ to an algorithm $a_S(i)$.
+We define its penalised cost on instance $i$ as
+\[
+  \tilde{q}_S(i) = \tilde{q}(a_S(i), i),
+\]
+and its \emph{regret} relative to the oracle as
+\[
+  r_S(i) = \tilde{q}_S(i) - \tilde{q}(a^\star(i), i).
+\]
+We then report summary statistics over the evaluation set $I$:
+\begin{itemize}
+  \item \textbf{Mean and median regret:}
+    \[
+      \overline{r}_S =
+      \frac{1}{|I|} \sum_{i \in I} r_S(i),
+      \qquad
+      \text{median}(r_S).
+    \]
+    Low regret indicates that the selector tends to choose algorithms
+    whose performance is close to the oracle.
+
+  \item \textbf{Top–1 accuracy vs oracle:}
+    \[
+      \text{acc}_S
+      = \Pr_{i \sim I}[a_S(i) = a^\star(i)],
+    \]
+    i.e.\ the fraction of instances on which the selector picks exactly
+    the same algorithm as the oracle.
+
+  \item \textbf{Total wall–clock time:}
+    For each instance we also track the total time spent on feature
+    extraction, selection, and solving,
+    \[
+      t_S^{\text{tot}}(i)
+      = t_{\text{feat}}(i) + t_{\text{select}}^S(i) + t(a_S(i), i),
+    \]
+    and report the average $\overline{t}_S^{\text{tot}}$ across instances.
+\end{itemize}
+
+These metrics allow us to compare the rule–based selector, the
+Random Forest selector, the SBA baseline, and the oracle on a common,
+failure–aware scale. Because timeouts and infeasible runs are penalised
+in a way that depends only on the instance (via $U(i)$), we obtain a
+more realistic picture of selector quality than if we averaged only over
+successful runs.
+
+
+\subsection{Experimental Protocol}
+% Describe:
+% - How many independent runs are performed per algorithm-instance pair.
+% - Random seed handling and reproducibility measures.
+% - How training/validation/test splits are handled if ML-based selection is used.
+% - Hardware details (CPU, RAM) and software environment.
+
+\subsection{Implementation Details}
+% Summarise key implementation decisions:
+% - Programming language (Python), libraries (e.g., NumPy, JAX, OR-Tools, etc.).
+% - Data storage and logging.
+% Mention that the code repository is available (if applicable).
+
+
+
+
+
+
+
+
+
+
+
+
+
+\newpage
+\section{Empirical Characterisation of TSP Algorithms}
+\label{sec:empirical}
+
+\subsection{Global Performance Overview}
+% Present aggregate statistics:
+% - Overall distribution of runtimes and solution qualities across all instances.
+% - Baseline comparisons between algorithms (e.g., average gap vs average time).
+% Provide initial plots/tables that give the reader a global picture.
+
+\subsection{Pareto Front Analysis by Instance Family}
+% For each instance family:
+% - Construct Pareto fronts of (runtime, quality) for the algorithms.
+% - Provide plots illustrating trade-offs.
+% Discuss which algorithms dominate or are dominated in different regimes (small vs large n, etc.).
+
+\subsection{Effect of Instance Features on Algorithm Performance}
+% Explore correlations between instance features and algorithm performance.
+% Use scatter plots, heatmaps, or simple regression models to illustrate patterns.
+% Identify regions of the feature space where particular algorithms tend to perform best.
+
+\subsection{Discussion of Empirical Findings}
+% Summarise key observations:
+% - Which algorithms are robust vs highly instance-dependent?
+% - Where are the strongest trade-offs?
+% Connect these insights explicitly to the design of AutoTSP in the next section.
+% Highlight any surprising or counter-intuitive results.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+\newpage
+\section{AutoTSP: Per-Instance Algorithm Selection}
+\label{sec:autotp}
+
+\subsection{Design Goals and Constraints}
+% State the design goals:
+% - Improve average performance over a distribution of instances.
+% - Maintain low selection overhead (cheap feature computation, fast decision).
+% - Be simple and interpretable (especially for the rule-based baseline).
+% Describe any constraints imposed by the application scenario (e.g., strict time budgets).
+
+\subsection{Rule-Based Selector}
+% Describe the rule-based AutoTSP:
+% - Specify rules (e.g., threshold on problem size, density, metric structure).
+% - Explain how rules were derived from empirical results in \Cref{sec:empirical}.
+% Provide a clear description or pseudocode.
+
+\subsubsection{Construction of Rules from Empirical Data}
+% Detail the process of constructing the rules:
+% - Manual inspection of Pareto fronts.
+% - Partitioning of feature space based on observed algorithm dominance.
+% Possibly include simple decision diagrams or flow charts.
+
+\subsubsection{Evaluation of the Rule-Based Selector}
+% Compare rule-based AutoTSP against:
+% - Each individual algorithm.
+% - Simple baselines (e.g., always choose algorithm X).
+% Present results in terms of:
+% - Average performance metrics.
+% - Fraction of instances where AutoTSP matches the oracle best algorithm.
+% - Any improvements on Pareto front coverage.
+
+\subsection{Learning-Based Selector (Optional)}
+% If implemented:
+% - Describe the learning model (e.g., random forest, logistic regression).
+% - Specify input features and target labels (best algorithm, or performance prediction).
+% - Explain training and validation procedures.
+
+\subsubsection{Model Specification and Training}
+% Provide model details and training hyperparameters.
+% Discuss feature normalisation, regularisation, etc.
+
+\subsubsection{Evaluation and Comparison}
+% Evaluate the learned selector against:
+% - The rule-based selector.
+% - Individual algorithms and baselines.
+% Analyse where the learned selector helps most / fails.
+
+\subsection{Cost of Selection vs Benefit}
+% Quantify the overhead of AutoTSP:
+% - Time to compute features.
+% - Time to evaluate selection rules or ML model.
+% Compare this overhead to the gains in runtime or quality.
+% Discuss scenarios where selection cost may outweigh benefits (e.g., very small instances).
+
+\subsection{Case Studies}
+% Present a few illustrative instances or families:
+% - Show how AutoTSP chooses different algorithms.
+% - Provide detailed plots of algorithm performance vs chosen strategy.
+% Use these to provide intuition and interpretability for the selector.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+\newpage
+\section{Conclusion and Future Work}
+\label{sec:conclusion}
+
+\subsection{Summary of Contributions}
+% Recap the main contributions of the thesis.
+% Emphasise the empirical characterisation, AutoTSP design, and key findings.
+
+\subsection{Limitations}
+% Discuss limitations:
+% - Limited algorithm portfolio.
+% - Specific instance families and sizes.
+% - Assumptions (e.g., symmetric Euclidean TSP only).
+% Note how these limitations affect the generality of the results.
+
+\subsection{Future Directions}
+% Suggest extensions:
+% - Larger or different algorithm portfolios.
+% - Richer instance features or more advanced ML methods.
+% - Extension to other combinatorial problems (VRP, scheduling, etc.).
+% - Integration into real-world systems or benchmarks.
+
+\newpage
+\appendix
+
+\section{Additional Experimental Results}
+% Extra plots, tables, and figures that support the main text but are too detailed to include earlier.
+
+\section{Implementation Details and Code Listings}
+% Include key code snippets (or point to the repository) for:
+% - Algorithm implementations/wrappers.
+% - AutoTSP rule-based and ML-based selectors.
+% - Experimental harness and data processing scripts.
+
+\newpage
+\printbibliography
+
+\end{document}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+\newpage
+\section{Conclusion and Future Work}
+\label{sec:conclusion}
+
+
+
+\newpage
+\printbibliography
+
+\end{document}
