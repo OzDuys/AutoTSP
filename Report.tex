@@ -45,8 +45,33 @@
 \vspace{2em}
 
 \begin{abstract}
-% High-level motivation: TSP, algorithmic diversity, and the need for per-instance algorithm selection. 
-% Briefly state: (i) problem, (ii) approach, (iii) key findings, (iv) contributions.
+The Traveling Salesman Problem (TSP) is a standard testbed for
+combinatorial optimisation, with a large ecosystem of exact algorithms,
+heuristics, and metaheuristics. In practice, no single algorithm is
+best for all instances: performance depends strongly on problem size,
+metric structure, and geometric layout. This report studies this
+instance–dependence systematically and uses it to build \emph{AutoTSP},
+a simple per-instance algorithm selection system for the TSP.
+
+The work starts from a heterogeneous benchmark of synthetic and
+real-world TSP instances, together with a portfolio of exact methods,
+constructive heuristics, local search, and metaheuristics. Algorithms
+are evaluated under a fixed wall-clock budget using a penalised
+multi-objective metric that combines tour quality and runtime and
+treats timeouts as expensive failures. This analysis reveals pronounced
+shifts in the quality–time Pareto front across instance families and
+sizes, confirming that different solvers dominate in different regions
+of the instance space.
+
+Building on this, AutoTSP uses cheap instance features to select a
+single solver per instance. Two selectors are considered: a transparent
+rule-based policy and a learning-based Random Forest trained on
+benchmark logs. On a held-out test set the Random Forest selector
+matches an oracle choice on most instances and improves noticeably over
+both the rule-based baseline and the best fixed algorithm, while adding
+only modest overhead. The report thus provides an end-to-end case study
+of per-instance algorithm selection for a classical combinatorial
+problem.
 \end{abstract}
 
 \newpage
@@ -55,21 +80,109 @@
 
 \newpage
 \section{Introduction}
-% Explain how i started initially by just running various tsp algorithms on a syntehtic dataset of tsp probhlems when i realised how different the pareto forntiers are for different city counts.
-% This huge difference made me think about whether there is a way tio autonaticaaly slect the best algorithm ensuring its poareto efficent given certain constraints.
 
+The Traveling Salesman Problem (TSP) is one of the canonical problems in
+combinatorial optimisation. Given a set of cities and pairwise travel
+costs, the goal is to find the cheapest tour that visits each city once
+and returns to the start. The decision version of TSP is NP-complete,
+and the number of possible tours grows factorially with the number of
+cities. For even moderately sized instances, exhaustive search is
+impossible, and one must rely on a rich toolbox of exact methods,
+heuristics, and metaheuristics.
 
-% Conceptually, AutoTSP is related to ideas from AutoML and meta-learning: instead of fixing a single solver, we use data from past runs to choose a solver per instance. However, AutoTSP is much more focused: it targets a single combinatorial problem (TSP) and selects from a small portfolio of pre-defined algorithms, rather than searching over full machine learning pipelines and hyperparameters.
+Over decades of work this toolbox has become remarkably diverse. Exact
+methods based on dynamic programming, branch-and-bound, and cutting
+planes can prove optimality on small and medium instances. Constructive
+heuristics such as nearest neighbour and insertion rules provide fast
+but approximate solutions. Local search and metaheuristics, including
+2-opt and 3-opt, simulated annealing, genetic algorithms, ant colony
+optimisation, and Lin–Kernighan-style heuristics, typically offer the
+best compromise between quality and runtime on larger problems.
+However, their performance is strikingly instance-dependent: the same
+algorithm that performs well on small Euclidean instances may time out
+or give poor solutions on large asymmetric or non-metric ones.
 
-% This is an NP hard problem
+This project began with a simple experiment. I generated synthetic TSP
+instances of different sizes and geometric structures, ran several
+off-the-shelf solvers on each, and plotted their empirical
+quality–runtime trade-offs. The resulting Pareto fronts changed
+dramatically with both city count and instance family: exact solvers
+dominated on tiny graphs, Lin–Kernighan was best on medium-size
+geometric instances, and simple metaheuristics were often the only
+methods finishing within the budget on very large or irregular
+problems. No single algorithm was consistently near the front, even
+though all instances were “just TSPs”.
 
-% The search spaces scales in ...  with city size.
-% There are 5040 routes between 8 cities
+From a theoretical standpoint this behaviour is consistent with
+no-free-lunch theorems for optimisation, which state that no algorithm
+can be uniformly best over all possible problems. In practice, it
+suggests a different perspective: instead of searching for a single
+best TSP algorithm, we should choose an algorithm that is well matched
+to the particular instance at hand. This is the idea behind
+\emph{algorithm selection} and, in a broader machine learning context,
+\emph{AutoML}. In this report I study a focused version of this idea:
+given a portfolio of TSP algorithms with diverse strengths and
+weaknesses, can we automatically select a good solver for each incoming
+instance, using only cheap instance features and within a fixed time
+budget?
 
-% Why is this problem relevant
-% Explain how its not necessarily directly pplicableexcept in a few instances but it can be a testbed and allow for theoretical exploration.
+The system developed here, called \emph{AutoTSP}, treats algorithm
+selection as a meta-optimisation problem on top of the TSP. At
+prediction time AutoTSP takes a TSP instance and a time budget, computes
+a small feature vector describing the instance (such as the number of
+cities, metric structure, and simple geometric dispersion measures),
+chooses a single algorithm from the portfolio based on these features,
+and runs it once within the remaining budget. Conceptually, the user
+interacts with AutoTSP as a black-box “meta-solver”: they supply a TSP
+instance, and the system handles feature extraction, algorithm choice,
+and solver execution.
 
+The report has three main components. First, it builds a heterogeneous
+benchmark of TSP and TSP-like instances by combining standard repositories
+with synthetic geometric families, and it evaluates a portfolio of exact
+methods, constructive heuristics, local search, and metaheuristics on
+this benchmark under a strict per-instance time budget. Performance is
+measured by a penalised cost that combines tour quality and runtime and
+assigns heavy penalties to timeouts and failures, allowing a fair
+comparison between algorithms that solve very different subsets of
+instances.
 
+Second, it analyses the resulting data from a multi-objective
+perspective. For different instance families and size ranges, the report
+traces empirical Pareto fronts and studies how they move as instance
+features change. This analysis confirms that no single TSP algorithm
+dominates across the benchmark: different methods occupy different
+regions of the quality–runtime trade-off, and simple instance features
+(such as size, metric flags, and nearest-neighbour probes) already give
+useful information about which algorithms are likely to work well.
+
+Third, it introduces AutoTSP as a concrete algorithm selection system.
+Two selectors are considered: a hand-crafted rule-based selector that
+encodes simple heuristics over problem size and structure, and a
+learning-based selector implemented as a Random Forest classifier
+trained on the benchmark logs. Both selectors are evaluated on a held-out
+test set and compared to an oracle that always picks the best algorithm
+in hindsight and to a “single best” baseline that always runs the same
+solver. The Random Forest selector matches the oracle choice on most
+test instances, improves over the best fixed algorithm in terms of
+normalised cost, and substantially outperforms the rule-based baseline,
+all while adding only modest overhead.
+
+The rest of the report is organised as follows.
+\Cref{sec:background} reviews the TSP, relevant variants, and
+background on multi-objective optimisation and algorithm selection.
+\Cref{sec:algorithms} summarises the algorithm portfolio used in this
+work. \Cref{sec:theory} formalises the AutoTSP setting, states the
+research questions and hypotheses, and frames algorithm selection as an
+optimisation problem. \Cref{sec:methodology} details the experimental
+setup, including the instance collection, feature extraction, evaluation
+metrics, and benchmarking protocol.
+\Cref{sec:empirical} presents an empirical analysis of portfolio
+performance and Pareto fronts across instance families.
+\Cref{sec:autotp} introduces the AutoTSP selectors and evaluates them
+against the oracle and baseline policies.
+Finally, \Cref{sec:conclusion} summarises the findings and outlines
+directions for future work.
 
 
 
@@ -152,7 +265,7 @@ The TSP and its variants appear in a wide range of applications, including:
     \item \textbf{Data analysis and layout:} ordering tasks or objects to minimise transition costs, or arranging items in a linear order that preserves spatial or similarity relationships.
 \end{itemize}
 
-In this thesis, the primary focus will be on (state the precise variant you will work with, e.g.\ symmetric Euclidean TSP with non-negative edge weights). This choice keeps the setting concrete while still being rich enough to exhibit diverse algorithmic behaviour across different instance families.
+In this report, the primary focus is on \emph{metric} TSP instances, including both Euclidean (coordinate-based) problems and symmetric distance-matrix instances derived from real-world benchmarks. Asymmetric and strongly non-metric cases are included mainly as a secondary robustness testbed and are analysed separately where relevant. This choice keeps the setting concrete while still being rich enough to exhibit diverse algorithmic behaviour across different instance families.
 
 
 \subsection{Non-Linear and Combinatorial Optimisation Viewpoint}
@@ -177,7 +290,7 @@ From the viewpoint of non-linear optimisation, the TSP is therefore a problem wi
 
 \subsection{Multi-Objective Optimisation and Pareto Efficiency}
 
-In this thesis, algorithms are not judged only by solution quality, but also by their computational cost. This leads to a \emph{multi-objective} viewpoint: instead of a single objective function, we consider several objectives simultaneously.
+In this report, algorithms are not judged only by solution quality, but also by their computational cost. This leads to a \emph{multi-objective} viewpoint: instead of a single objective function, we consider several objectives simultaneously.
 
 A general multi-objective optimisation problem can be written as
 \[
@@ -204,7 +317,7 @@ A solution \(x\) is said to \emph{Pareto-dominate} a solution \(y\) if
 A solution \(x^\star\) is \emph{Pareto-optimal} if there is no other solution that Pareto-dominates it. The set of all Pareto-optimal solutions is called the \emph{Pareto front}.
 \end{definition}
 
-When we compare TSP algorithms on a given class of instances, each algorithm induces a point in the plane whose coordinates are its typical runtime and typical solution quality. The Pareto front then captures the algorithms that achieve the best trade-offs: moving from one point on the front to another improves one objective only at the expense of worsening another. This perspective will be used throughout the thesis to describe and compare algorithm behaviour.
+When we compare TSP algorithms on a given class of instances, each algorithm induces a point in the plane whose coordinates are its typical runtime and typical solution quality. The Pareto front then captures the algorithms that achieve the best trade-offs: moving from one point on the front to another improves one objective only at the expense of worsening another. This perspective will be used throughout the report to describe and compare algorithm behaviour.
 
 
 \subsection{Algorithm Selection and Meta-Optimisation}
@@ -224,7 +337,7 @@ In practice, the selector usually does not see the instance directly, but only a
 \]
 The quality of a selector is measured by how well it performs, on average, compared to simple baselines such as always using the same algorithm.
 
-This viewpoint is an example of \emph{meta-optimisation}: instead of optimising directly over tours, we optimise over choices of algorithms or strategies that themselves solve optimisation problems. Designing AutoTSP can be seen as constructing and improving such a selector for TSP instances. The rest of the thesis will focus on (i) understanding how algorithm performance varies over different TSP instance families, and (ii) using this understanding to build and evaluate practical selection rules.
+This viewpoint is an example of \emph{meta-optimisation}: instead of optimising directly over tours, we optimise over choices of algorithms or strategies that themselves solve optimisation problems. Designing AutoTSP can be seen as constructing and improving such a selector for TSP instances. The rest of the report will focus on (i) understanding how algorithm performance varies over different TSP instance families, and (ii) using this understanding to build and evaluate practical selection rules.
 
 \paragraph{Relation to AutoML and algorithm portfolios.}
 The AutoTSP setting is closely related to ideas from AutoML and algorithm portfolios. AutoML systems typically select and configure entire machine learning pipelines (models, hyperparameters, and preprocessing steps) for a given dataset, often by running many candidate pipelines and comparing validation performance. In contrast, AutoTSP operates on a fixed combinatorial problem (the TSP) with a small, predefined portfolio of solvers. For each TSP instance, the selector makes a single, one-shot choice of algorithm from this portfolio, based on inexpensive instance features. In this sense, AutoTSP can be viewed as a \emph{one-choice portfolio optimisation} problem: given a portfolio of algorithms and a distribution of instances, choose a mapping from instance features to a single algorithm that optimises the overall quality--runtime trade-off.
@@ -351,7 +464,7 @@ Broadly, we can distinguish three families:
     \item \textbf{Metaheuristics}, which wrap higher-level search strategies around local moves or constructive steps.
 \end{itemize}
 
-In this thesis, these methods play a central role: they form a large part of the algorithm portfolio used in experiments, and their very different performance profiles across instance types motivate the need for algorithm selection.
+In this report, these methods play a central role: they form a large part of the algorithm portfolio used in experiments, and their very different performance profiles across instance types motivate the need for algorithm selection.
 
 
 \subsubsection{Constructive Heuristics}
@@ -499,7 +612,7 @@ with a trade-off parameter \(\alpha \in [0,1]\), then the expected performance o
 \]
 The algorithm selection problem is to find a selector \(S^\star\) that minimises \(\mathcal{L}(S)\) over some class of selectors (for example, all rule-based selectors of a certain form, or all models within a given machine learning family).
 
-In this sense, designing AutoTSP is itself an optimisation problem defined over the space of selectors. The hand-crafted rule-based selector and the random forest selector used in this thesis are two concrete choices for \(S\). In later chapters we will compare their performance to simple baselines and to an oracle that always chooses the best algorithm for each instance.
+In this sense, designing AutoTSP is itself an optimisation problem defined over the space of selectors. The hand-crafted rule-based selector and the random forest selector used in this report are two concrete choices for \(S\). In later chapters we will compare their performance to simple baselines and to an oracle that always chooses the best algorithm for each instance.
 
 
 \subsection{Multi-Objective Trade-offs: Quality vs Runtime}
@@ -560,7 +673,7 @@ The \emph{AutoTSP problem} is then:
     Given a portfolio \(\mathcal{A}\), an instance feature mapping \(\phi\), and an evaluation scheme as above, find a selector \(S\) within a chosen class (e.g.\ rule-based selectors or random forest models) that achieves the best trade-off between solution quality and runtime over instances drawn from \(\mathcal{D}\).
 \end{quote}
 
-In this thesis we study two concrete classes of selectors:
+In this report we study two concrete classes of selectors:
 \begin{enumerate}[noitemsep,topsep=0.5em]
     \item a manually designed rule-based selector, and
     \item a learning-based selector implemented as a random forest.
@@ -591,6 +704,7 @@ Here we compare AutoTSP against baselines such as always using the same algorith
 \begin{itemize}[noitemsep,topsep=0.5em]
     \item[\textbf{H2}] A rule-based selector that chooses algorithms based on a few simple features (such as number of vertices and basic structural statistics) achieves lower average regret to the oracle selector than any single fixed algorithm in the portfolio.
 \end{itemize}
+As discussed in \Cref{subsec:selector-eval}, this hypothesis is \emph{not} supported by the empirical results: in practice the rule-based policy is dominated by both the single best algorithm and the learning-based selector.
 
 \paragraph{RQ3: Benefit of learning-based selection over manual rules.}
 \emph{Does a learning-based selector (random forest) provide a measurable improvement over a manually designed rule-based selector, once selection overhead is taken into account?}
@@ -600,9 +714,9 @@ This question distinguishes between hand-crafted and data-driven selection. The 
     \item[\textbf{H3}] A random forest selector trained on instance features and observed algorithm performance achieves lower average regret than the manual rule-based selector, while incurring negligible additional selection cost.
 \end{itemize}
 
-These research questions structure the rest of the thesis.  
-Chapter~\ref{sec:empirical} addresses \textbf{RQ1} by empirically characterising algorithm performance across instance families.  
-Chapter~\ref{sec:autotp} addresses \textbf{RQ2} and \textbf{RQ3} by constructing the AutoTSP selectors and comparing them to baselines and to an oracle selector.
+These research questions structure the rest of the report.  
+Section~\ref{sec:empirical} addresses \textbf{RQ1} by empirically characterising algorithm performance across instance families.  
+Section~\ref{sec:autotp} addresses \textbf{RQ2} and \textbf{RQ3} by constructing the AutoTSP selectors and comparing them to baselines and to an oracle selector.
 
 
 
@@ -625,35 +739,235 @@ Chapter~\ref{sec:autotp} addresses \textbf{RQ2} and \textbf{RQ3} by constructing
 \label{sec:methodology}
 
 \subsection{Overview of the AutoTSP Pipeline}
-% Provide a high-level description of the end-to-end pipeline.
-% Consider including a TikZ flow diagram:
-%   Instance -> Feature Extraction -> AutoTSP Selector -> Chosen Algorithm -> Solution.
-% Explain where data is collected for analysis and training (if ML is used).
+
+AutoTSP takes a TSP instance as input and, within a fixed time budget,
+chooses and runs a single algorithm from the portfolio on that instance.
+The pipeline is designed so that all decisions are made from cheap,
+instance–level information rather than from trial runs of the solvers
+themselves.
+
+At prediction time the pipeline proceeds in four stages.
+\begin{enumerate}[noitemsep,topsep=0.5em]
+  \item \textbf{Instance normalisation.}
+    The incoming instance is represented as a complete weighted graph,
+    together with basic attributes such as the number of cities, metric
+    type, symmetry, and origin. This normalised view hides the details
+    of how the instance was originally specified (coordinates versus
+    distance matrix, symmetric versus asymmetric file formats).
+  \item \textbf{Feature extraction.}
+    A lightweight feature extractor computes a small set of numerical
+    and Boolean descriptors of the instance: problem size, indicators of
+    metric structure, measures of spatial spread, and simple probes of
+    typical edge lengths and tour scales. The extractor also measures
+    how long it took to compute these features, so that this overhead
+    can be accounted for in the remaining budget.
+  \item \textbf{Algorithm selection.}
+    The selector receives the feature vector and the remaining time
+    budget and returns a single algorithm from the portfolio. In the
+    rule–based version this choice is determined by hand–crafted
+    thresholds on features such as the number of cities and metric type.
+    In the learning–based version a Random Forest model, trained on
+    historical benchmark data, predicts the algorithm that is expected
+    to perform best under the budget.
+  \item \textbf{Solver execution and reporting.}
+    The chosen solver is run once on the instance, with a strict
+    wall–clock limit equal to the remaining budget. It produces a tour
+    (if found), its cost, and the actual runtime and status. AutoTSP
+    then returns this outcome together with metadata describing which
+    algorithm was selected, which features were used, and how the time
+    budget was spent between feature extraction and solving.
+\end{enumerate}
+
+This architecture ensures that AutoTSP can be used as a black–box
+“meta–solver”: users provide a TSP instance and an overall time budget,
+and the system handles feature computation, algorithm choice, and solver
+execution in a single call.
 
 \subsection{Algorithm Portfolio}
-% List and describe the specific algorithms included in the portfolio for experiments.
-% Justify each choice (e.g., representative of a class, widely used, differing trade-offs).
-% Note any implementation details: libraries used, parameter settings, stopping criteria.
+
+AutoTSP operates on a fixed but heterogeneous portfolio of TSP
+algorithms. The portfolio is deliberately constructed to span very
+different parts of the quality–time trade–off, so that the selector has
+meaningful choices to make. Broadly, it contains exact algorithms,
+approximation schemes, constructive and local–search heuristics, and
+metaheuristics.
+
+\paragraph{Exact methods.}
+The exact solvers include classic dynamic–programming and
+branch–and–bound approaches (such as Held–Karp and a generic
+branch–and–bound tree search), cutting–plane methods, and a
+Concorde–style solver for symmetric Euclidean instances. These methods
+guarantee optimal tours but have exponential worst–case complexity and
+in practice are only viable on small to moderate instances. They are
+included in the portfolio to provide a high–quality baseline on small
+instances and to anchor the empirical Pareto fronts.
+
+\paragraph{Approximation algorithm.}
+To bridge the gap between exact methods and heuristics, the portfolio
+includes Christofides’ algorithm for metric TSP. This constructive
+approximation scheme builds a tour by combining a minimum spanning tree
+with a minimum–weight matching on odd–degree vertices. It runs in
+polynomial time and enjoys a worst–case $1.5$–approximation guarantee
+on symmetric metric instances, making it an attractive option when exact
+methods are already too slow but strong guarantees are still desired.
+
+\paragraph{Constructive and local–search heuristics.}
+Several pure heuristics provide fast, scalable baselines: simple
+nearest–neighbour construction, a multi–start nearest–neighbour variant
+that restarts from different initial cities, problem–specific
+constructive heuristics that exploit spatial structure, and local–search
+methods based on 2–opt and 3–opt edge exchanges. These algorithms are
+generally very cheap to run and scale to large $n$, but the tour
+quality they achieve depends strongly on the instance geometry and the
+initial tour. In the portfolio they cover the “fast but approximate”
+corner of the Pareto frontier.
+
+\paragraph{Metaheuristics.}
+Finally, the portfolio contains several metaheuristic algorithms that
+wrap higher–level search strategies around local moves. These include
+simulated annealing, a genetic algorithm, iterated local search, ant
+colony optimisation, and a Lin–Kernighan–style heuristic (LKH) for
+larger symmetric instances. Metaheuristics typically incur higher
+computational cost per run than simple local search but can reach much
+shorter tours on difficult instances by escaping poor local minima and
+exploring the search space more aggressively.
+
+From an implementation perspective, most of these algorithms are
+implemented in pure Python on top of basic numerical routines. Two
+notable exceptions are the Concorde–based exact solver, which calls the
+highly optimised C implementation via a Python interface, and the
+Lin–Kernighan–style heuristic, which invokes the LKH code. Their
+measured runtimes therefore reflect both algorithmic efficiency and the
+advantages of compiled code. The simpler Python implementations of
+branch–and–bound, dynamic programming, and genetic and local–search
+heuristics should be seen as reference baselines rather than
+state–of–the–art engineering efforts.
+
+Taken together, this portfolio exposes a rich variety of performance
+profiles across instance types and sizes. Some algorithms are extremely
+strong on small or highly structured problems but fail or time out on
+larger ones; others are robust but only moderately accurate. The central
+task of AutoTSP is to exploit these differences by choosing, for each
+incoming instance, the algorithm whose expected quality–time trade–off
+is most favourable under the given budget.
 
 \subsection{TSP Instance Families}
-% Describe how TSP instances are generated or selected:
-% - Euclidean random points in the plane.
-% - Clustered vs uniform distributions.
-% - Dense vs sparse graphs (if applicable).
-% - Any real-world benchmark instances.
-% Define the ranges of problem sizes (number of nodes) and other structural properties.
-% Explain how many instances per family are used and why.
 
-\subsection{Dataset: TSP Instance collection}
+The empirical study is based on a mixture of synthetic and external TSP
+instances, all mapped into the common weighted–graph representation
+described in \Cref{subsec:implementation-details}. The synthetic
+instances are designed to span a range of geometric structures, while
+the external instances provide realistic benchmarks drawn from standard
+collections.
 
-# Sources
-https://comopt.ifi.uni-heidelberg.de/software/TSPLIB95/
-https://familytsp.campus.ciencias.ulisboa.pt/instances/generated-instances-based-on-symmetric-tsp-instances/
-https://sites.google.com/site/atspinstances/cirasella-instances
-https://lopez-ibanez.eu/tsptw-instances
-https://github.com/mastqe/tsplib
-http://archive.dimacs.rutgers.edu/Challenges/TSP/atsp.html
-https://www.math.uwaterloo.ca/tsp/data/index.html
+\paragraph{Synthetic Euclidean and Manhattan families.}
+For symmetric geometric TSPs we generate instances by sampling points in
+the plane and defining edge weights via Euclidean distances. Several
+families are considered:
+\begin{itemize}[noitemsep,topsep=0.5em]
+  \item \emph{Uniform Euclidean clouds}, where cities are independently
+    and uniformly distributed over a square region, yielding relatively
+    homogeneous distance structure.
+  \item \emph{Clustered, ring–cluster, and corridor instances}, where
+    cities form tight clusters, are arranged along a ring, or lie in a
+    narrow corridor, creating bottlenecks and highly anisotropic
+    geometries.
+  \item \emph{Grid–like and rotated grids}, where points lie near a
+    perturbed lattice, with rotated variants to break axis–alignment
+    assumptions.
+  \item \emph{Noisy Euclidean variants}, where small perturbations are
+    added to otherwise regular patterns to test robustness to local
+    irregularities.
+\end{itemize}
+In addition, we generate Manhattan instances by sampling points
+uniformly in the plane and measuring distances in the $\ell_1$ norm,
+both in a clean form and with additive noise. These families provide
+metric but non–Euclidean behaviour and probe how strongly solvers rely
+on Euclidean structure.
+
+\paragraph{Asymmetric and matrix–based instances.}
+To cover asymmetric travelling–salesman problems (ATSP) and situations
+where only a distance matrix is available, we include synthetic
+instances with explicitly asymmetric cost matrices. Some are derived
+from Euclidean distances with directional skew, while others are drawn
+as random non–symmetric matrices subject to basic consistency
+conditions. These instances separate the effects of asymmetry from
+those of geometric layout.
+
+\paragraph{External benchmark instances.}
+External problems are ingested from standard TSP and ATSP collections
+and from numeric matrix files. They include both coordinate–based
+instances (such as classic TSPLIB benchmarks) and pure distance
+matrices arising from application–specific models. All such instances
+are parsed into the unified graph representation, annotated with their
+origin and basic structural attributes, and then deduplicated by
+comparing content–based hashes of their distance data and metadata. This
+prevents overlapping datasets from contributing essentially identical
+instances to the benchmark.
+
+\paragraph{Size ranges and allocation.}
+Across all families we consider a wide range of problem sizes. For
+synthetic geometric instances we sample city counts on a logarithmic
+scale, starting from very small problems with around five cities and
+extending up to instances with roughly one to two thousand cities.
+Within each combination of family and size, we generate multiple
+independent instances from a fixed random seed to capture variability.
+External instances span a similar size range, with an optional cap on
+the maximum number of cities to keep solver runtimes manageable.
+
+The resulting dataset contains, for each family, a modest number of
+instances per size (rather than an exhaustive enumeration), but covers
+many distinct structural patterns and scales. This balance between
+diversity and per–family sample size is chosen to stress the
+instance–dependence of algorithm performance and to provide meaningful
+training and test distributions for the AutoTSP selectors.
+
+\subsection{Dataset: TSP instance collection}
+\label{subsec:dataset}
+
+The AutoTSP experiments require a heterogeneous collection of TSP-type instances that spans a range of sizes, structures, and constraint types. In line with the problem setting in \Cref{sec:background}, the primary target is metric TSP: Euclidean coordinate-based problems and symmetric distance matrices that approximately satisfy the triangle inequality. The combined benchmark also contains asymmetric and more irregular matrix-explicit instances, which are retained mainly as a secondary robustness testbed. To assemble this collection, instances were gathered from several established public repositories, covering both symmetric and asymmetric TSP, as well as simple extensions such as time windows. All instances are converted to a unified JSONL format using a common ingestion pipeline.
+
+\subsubsection*{Sources}
+
+The instance collection includes data from the following sources:
+\begin{itemize}[noitemsep,topsep=0.5em]
+    \item \textbf{TSPLIB95}: classical benchmark instances for symmetric and asymmetric TSP, provided in TSPLIB format and widely used for comparative studies.\cite{reinelt1991tsplib,tsplib95_website}
+    \item \textbf{FamilyTSP generated instances}: instances generated from symmetric TSPLIB problems with additional family structure, enriching the variety of Euclidean-like graphs.\cite{familytsp_instances}
+    \item \textbf{Cirasella asymmetric instances}: a set of asymmetric TSP instances created for algorithmic studies and challenge benchmarks, based on several ATSP instance generators.\cite{cirasella2001atsp,cirasella_instances_site}
+    \item \textbf{TSP with time windows (TSPTW)}: instances with time-window constraints, providing TSP-like problems with additional temporal structure.\cite{lopezibanez_tsptw_instances,lopezibanez2009beamaco}
+    \item \textbf{\texttt{mastqe/tsplib} mirror}: a GitHub mirror of TSPLIB-style instances, used as a convenient scripted source; overlapping instances are deduplicated at ingestion time.\cite{mastqe_tsplib}
+    \item \textbf{DIMACS TSP/ATSP collections}: instances used in the DIMACS TSP challenge, including directed problems and explicit distance matrices.\cite{dimacs_tsp_challenge}
+    \item \textbf{Waterloo TSP data sets}: larger Euclidean TSP instances based on geographic coordinates, including national and world-scale examples.\cite{uwaterloo_tsp_test_data}
+\end{itemize}
+
+Together, these sources yield symmetric and asymmetric instances with a wide range of city counts, metric and non-metric cost structures, and the presence or absence of additional constraints (such as time windows).
+
+\subsubsection*{Ingestion and normalisation}
+
+All instances are converted to a common internal representation by a Python ingestion script. The script recursively scans a specified root directory for files with extensions
+\[
+\{\texttt{.tsp}, \texttt{.atsp}, \texttt{.txt}, \texttt{.dat}, \texttt{.tw}\},
+\]
+and attempts to parse each file as follows:
+\begin{itemize}[noitemsep,topsep=0.5em]
+    \item Files with extensions \texttt{.tsp} or \texttt{.atsp} are parsed using a dedicated \texttt{parse\_tsplib} function that handles TSPLIB-style headers, coordinate sections, and explicit distance matrices.
+    \item Other text files are first passed to \texttt{parse\_numeric\_matrix}, which attempts to interpret the contents as a full distance matrix without headers. If this fails, \texttt{parse\_header\_matrix} is used, which expects a leading dimension \(n\) followed by an \(n \times n\) matrix.
+\end{itemize}
+
+For each successfully parsed file, a base record is constructed containing, where available:
+\begin{itemize}[noitemsep,topsep=0.5em]
+    \item node \texttt{coordinates} or a full \texttt{distance\_matrix},
+    \item the inferred \texttt{metric} and \texttt{problem\_type},
+    \item the \texttt{origin} and \texttt{source\_name} (dataset and file stem),
+    \item a Boolean \texttt{directed} flag,
+    \item \texttt{num\_cities}, derived from the coordinate array or matrix dimension.
+\end{itemize}
+
+A content-based identifier \texttt{problem\_id} is then computed for each record using a helper function \texttt{compute\_problem\_id}. Before a record is written, this identifier is checked against those already present in the output JSONL file. If the identifier has been seen, the instance is skipped. This mechanism removes duplicates arising from overlapping sources (for example, TSPLIB95 and its mirrors).
+
+The script supports an optional \texttt{--max-cities} argument; instances whose number of cities exceeds this limit are discarded. This allows the dataset to be restricted to problem sizes that are practical for the chosen algorithm portfolio.
+
+After parsing, filtering, and deduplication, the script writes each instance as a JSON object to a single \texttt{problems.jsonl} file. This file forms the unified TSP instance collection used throughout the empirical analysis and in the training and evaluation of the AutoTSP selectors.
 
 \subsection{Instance Features}
 \label{subsec:instance-features}
@@ -693,8 +1007,7 @@ Given an instance $i$ with either an explicit distance matrix or a set of
     \[
       \texttt{bbox\_area} = (\max_x - \min_x)(\max_y - \min_y).
     \]
-    These quantities reflect how spread out the points are and therefore
-    roughly how long typical edges and tours are.
+    These quantities reflect how spread out the points are and therefore roughly how long typical edges and tours are.
 
   \item \textbf{Centroid dispersion.}
     Let $c$ be the centroid of the coordinates. We compute the mean
@@ -745,7 +1058,7 @@ time out or fail, not just average over successful runs, otherwise exact
 methods that only solve tiny instances would appear unfairly strong.
 
 \paragraph{Per–instance penalised cost.}
-We fix a per–instance wall–clock budget $T$ (here $T = 5$ seconds). For
+We fix a per–instance wall–clock budget $T$ (here $T = 10$ seconds). For
 each instance $i$ and algorithm $a$ we consider a single run from the
 benchmark data, with tour cost $q(a,i)$, runtime $t(a,i)$, and status
 (success, timeout, infeasible, etc.). We then define a \emph{penalised
@@ -805,11 +1118,10 @@ Given $\tilde{q}(a,i)$ for all algorithms $a$ on instance $i$, the
 \[
   a^\star(i) = \arg\min_{a} \tilde{q}(a,i).
 \]
-This oracle is an upper bound on what any selector operating on the same
-algorithm set can achieve.
+Because costs are to be minimised, this oracle provides a lower bound on the average penalised cost achievable by any selector that chooses among the same algorithm set based only on instance features.
 
 We also define a \emph{single best algorithm} (SBA) baseline. For each
-algorithm $a$ we compute its average penalised cost over instances:
+algorithm $a$ we compute its average penalised cost over an evaluation set $I$ of instances:
 \[
   \bar{q}(a) = \frac{1}{|I|} \sum_{i \in I} \tilde{q}(a,i),
 \]
@@ -871,17 +1183,202 @@ successful runs.
 
 
 \subsection{Experimental Protocol}
-% Describe:
-% - How many independent runs are performed per algorithm-instance pair.
-% - Random seed handling and reproducibility measures.
-% - How training/validation/test splits are handled if ML-based selection is used.
-% - Hardware details (CPU, RAM) and software environment.
+\label{subsec:experimental-protocol}
 
-\subsection{Implementation Details}
-% Summarise key implementation decisions:
-% - Programming language (Python), libraries (e.g., NumPy, JAX, OR-Tools, etc.).
-% - Data storage and logging.
-% Mention that the code repository is available (if applicable).
+All experiments follow the same end–to–end pipeline:
+\emph{(i)} construct a benchmark distribution of TSP instances,
+\emph{(ii)} evaluate a fixed portfolio of algorithms on each instance
+under per–run resource constraints, \emph{(iii)} derive per–instance
+performance summaries and penalised costs as in
+\Cref{subsec:evaluation-metrics}, and \emph{(iv)} train and evaluate
+algorithm selectors on this benchmark.
+
+\paragraph{Benchmark instance distribution.}
+The benchmark instances combine synthetic TSPs and external benchmark
+problems. Synthetic instances are generated by sampling city
+coordinates in the plane and deriving distances from either Euclidean
+or Manhattan metrics. Several geometric families are represented,
+including uniform point clouds, perturbed grids, clustered point sets,
+rings of clusters, circular instances, and noisy variants, so that the
+portfolio encounters both “easy” and highly structured instances.
+For each family we generate a grid of problem sizes ranging from very
+small problems with $n \approx 5$ cities up to large instances with
+thousands of cities, and draw multiple independent realisations per
+size from a fixed pseudo–random generator.
+
+External instances are drawn from standard TSP benchmark collections
+(such as TSPLIB) and from matrix–based datasets. These problems arrive
+in a variety of formats (coordinate files, full distance matrices,
+asymmetric cost tables) and are normalised into a common representation
+as weighted complete graphs together with high–level metadata:
+problem type (symmetric or asymmetric), metric family, and origin.
+For coordinate–based problems, optional geometric transformations
+such as rotation or rescaling are applied to enrich the variety of
+structures without changing the underlying combinatorics.
+
+The synthetic and external problems are merged into a single benchmark
+set. To avoid double–counting identical or trivially transformed
+instances, we compute a content hash from the distance information and
+basic metadata, and discard duplicates that share the same hash. The
+resulting dataset covers a wide range of sizes, metrics, and structural
+patterns, and serves as the empirical basis for all subsequent
+analyses. For the selector experiments this combined benchmark is then
+split at the level of problem identifiers into a training set and a
+held–out test set: we shuffle the list of unique \texttt{problem\_id}s
+with a fixed random seed and allocate roughly $80\%$ of instances to
+training and the remaining $20\%$ to testing. Because the split is done
+on the full merged benchmark, both parts contain the same families of
+instances and similar size ranges, and no instance appears in both
+training and test sets; the 688/166 split reported in
+\Cref{sec:autotp} is derived from this partition.
+
+\paragraph{Algorithm portfolio and benchmarking harness.}
+The algorithm portfolio comprises exact, approximation, heuristic, and
+metaheuristic methods as described in \Cref{sec:algorithms}. A dedicated
+benchmarking harness orchestrates the evaluation. For each instance and
+each algorithm in the portfolio, it initiates a separate solver run
+with a fixed wall–clock budget and an optional memory limit. If a run
+exceeds these limits or fails internally, it is terminated and recorded
+as an infeasible outcome with an appropriate status code.
+
+To balance statistical robustness against computational cost, we use a
+single run per algorithm–instance pair. Stochastic methods such as
+simulated annealing or genetic algorithms rely on their internal
+randomness to explore the search space; additional repetitions would
+primarily reduce Monte Carlo noise rather than change the qualitative
+conclusions. Given the large number of instances and solvers, it is
+more informative to broaden coverage across instance types and sizes
+than to repeat identical configurations many times.
+
+The harness also avoids obviously intractable regimes. For each
+algorithm it maintains a short history of recent attempts on
+progressively larger instances, ordered by city count. If the last
+fifteen runs of a given algorithm all terminate unsuccessfully (i.e.,
+are recorded as infeasible) on increasingly large problems, subsequent
+instances are automatically treated as infeasible for that algorithm
+without attempting explicit runs. Algorithms that successfully solve
+any intervening instance reset this history, so that solvers are only
+skipped when they have consistently failed in a contiguous regime of
+problem sizes.
+
+Every run produces a record containing at least the problem identifier,
+algorithm name, status, tour cost (if available), and runtime. These
+records are stored in an append–only, line–oriented JSON format and
+constitute the raw data used to compute the penalised costs and oracle
+choices in \Cref{subsec:evaluation-metrics}.
+
+\paragraph{Selector training and evaluation.}
+Selector training is conducted offline on the logged benchmark data.
+For each problem we first identify, among all algorithms that completed
+within a prescribed selector budget (here 10 seconds), the one with the
+lowest tour cost; this defines the “best” algorithm for that instance.
+We then pair this label with the corresponding instance features
+produced by the feature–extraction module to obtain a training sample
+for the learning–based selector. A supervised classifier (a Random
+Forest in this work) is trained to predict the best algorithm from
+features alone.
+
+Selector evaluation proceeds by replaying the benchmark under the
+policies of interest. For each instance we compute the penalised costs
+for all algorithms, determine the oracle choice, and then inspect which
+algorithm would have been chosen by (i) the rule–based selector,
+(ii) the Random Forest selector, and (iii) simple baselines such as
+always running the single best algorithm in hindsight. Because all
+decisions are simulated on the logged benchmark data, no additional
+solver runs are required at evaluation time. The metrics in
+\Cref{subsec:evaluation-metrics} are then computed from these replayed
+decisions.
+
+\paragraph{Randomness and reproducibility.}
+Synthetic instances are generated using a fixed pseudo–random seed for
+each configuration, so the benchmark distribution is fully
+reproducible given the generation parameters. Feature extraction is a
+deterministic function of the instance description. Stochastic solvers
+and selectors rely on internal random number generators, but their
+outcomes are always recorded in full, together with status codes and
+timing information. All subsequent analysis (selector training, regret
+computation, and plotting) operates entirely on these logged records,
+which makes the empirical results reproducible without rerunning the
+underlying algorithms.
+
+All experiments were conducted on a standard multi–core desktop machine
+with sufficient memory to hold the largest distance matrices. The main
+computational bottleneck is the cumulative runtime of the solver
+portfolio on the largest instances; once the benchmark results have
+been collected, selector training and evaluation are comparatively
+cheap.
+
+\subsection{System Architecture}
+\label{subsec:implementation-details}
+
+Conceptually, the AutoTSP system consists of five interacting
+components: a canonical instance representation, a feature extraction
+module, a portfolio of TSP solvers, a selection layer, and a
+benchmarking and logging layer. This section describes these components
+at a high level.
+
+\paragraph{Instance representation.}
+All TSP instances are represented internally as complete weighted
+graphs. Each instance record contains the number of cities, a compact
+description of either the coordinates or the distance matrix, and a set
+of high–level attributes such as the metric family (Euclidean,
+Manhattan, explicit), symmetry (symmetric versus asymmetric), and
+problem origin (synthetic or external benchmark). This abstraction
+decouples the rest of the system from the details of how raw datasets
+are parsed and ensures that every solver sees a uniform interface.
+
+\paragraph{Solver interface and portfolio.}
+Every algorithm in the portfolio exposes the same conceptual interface:
+given a distance matrix and a time budget, it returns a tour (if found),
+its total cost, a status flag indicating success or failure, and the
+elapsed runtime. Exact methods, approximation schemes, constructive
+heuristics, local search, and metaheuristics are all wrapped behind
+this interface. This standardisation allows the benchmarking harness
+and the selectors to treat all solvers uniformly, and makes it easy to
+extend the portfolio with additional algorithms in future work.
+
+\paragraph{Feature extraction.}
+The feature extraction module is responsible for computing the
+instance–level descriptors used by the selectors. It operates directly
+on the canonical instance representation and produces a small vector of
+numeric and Boolean features, such as the number of cities, indicators
+of metric structure, measures of spatial dispersion (e.g.\ bounding–box
+area, centroid radius), and scale estimates derived from landmark
+distances and truncated nearest–neighbour probes. The module is
+designed to be significantly cheaper than running any non–trivial
+solver, and it records its own runtime so that feature–extraction
+overhead can be accounted for in the evaluation.
+
+\paragraph{Selection layer.}
+On top of the feature extractor sits the selection layer, which maps
+instance features to one of the available solvers. In this report two
+selection mechanisms are explored. The first is a rule–based selector
+that encodes hand–crafted decision rules over problem size, metric
+structure, and time budget to select between exact methods, local
+search, and metaheuristics. The second is a learning–based selector,
+implemented as a Random Forest classifier trained on benchmark data to
+predict, from features alone, which solver will perform best under the
+time budget. Both selectors share the same interface and can be swapped
+interchangeably in the AutoTSP pipeline.
+
+\paragraph{Benchmarking and logging.}
+The benchmarking layer coordinates the interaction between instances,
+solvers, and selectors. It feeds instances to the portfolio under
+controlled resource limits, collects the resulting outcomes, and
+persists them in an append–only, line–oriented JSON format. Each
+record is self–contained and includes the instance identifier, selected
+algorithm, status, cost, runtime, and any additional metadata produced
+by the solver or selector. This design enables all downstream analyses
+to be conducted purely from logged data, without rerunning algorithms,
+and provides a clear separation between data collection and statistical
+evaluation.
+
+The entire system is implemented in Python using standard numerical and
+machine–learning libraries (for example NumPy, pandas, scikit–learn,
+matplotlib, and seaborn), but the experiments and conclusions presented
+in this report depend only on the abstract behaviour of the components
+described above.
+
 
 
 
@@ -896,32 +1393,140 @@ successful runs.
 
 
 \newpage
-\section{Empirical Characterisation of TSP Algorithms}
+\section{Empirical Analysis of the Algorithm Portfolio}
 \label{sec:empirical}
 
 \subsection{Global Performance Overview}
-% Present aggregate statistics:
-% - Overall distribution of runtimes and solution qualities across all instances.
-% - Baseline comparisons between algorithms (e.g., average gap vs average time).
-% Provide initial plots/tables that give the reader a global picture.
+Across the 13\,590 solver invocations in the benchmark log, just over
+half (approximately 51\%) completed. Metaheuristics and simple constructive heuristics
+have the highest completion rates (simulated annealing $94\%$, simple
+nearest neighbour $85\%$, LKH $82\%$), while the exact solvers often
+timed out (all four below $30\%$). When they do finish, exact methods,
+LKH, and ant colony are essentially optimal (median normalised cost near
+$1.0$), whereas purely constructive heuristics deteriorate sharply with
+size.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.75\linewidth]{success_rates.png}
+  \caption{Completion rates per algorithm over all $13{,}590$ runs.}
+  \label{fig:success_rates}
+\end{figure}
+
+Runtime and quality scale predictably with instance size. As shown in
+\Cref{fig:combined_results_overall_algorithms}, runtimes rise steeply for exact solvers and
+ant colony, remain almost flat for nearest-neighbour style heuristics,
+and grow moderately for LKH and simulated annealing. The matching cost
+curves mirror this: LKH, Concorde, and Held-Karp stay near the
+best-known cost across sizes, ant colony trades speed for slightly
+higher cost, and two/three-opt and genetic search drift further from the
+optimum on large instances. Completion rates are summarised in
+\Cref{fig:success_rates}, highlighting how the global averages are
+skewed by the large number of timeouts among the exact methods.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{combined_results_overall_algorithms.png}
+  \caption{Global runtime and normalised cost against problem size (mean
+  with $\pm1\sigma$ bands over successful runs).}
+  \label{fig:combined_results_overall_algorithms}
+\end{figure}
+
+
 
 \subsection{Pareto Front Analysis by Instance Family}
-% For each instance family:
-% - Construct Pareto fronts of (runtime, quality) for the algorithms.
-% - Provide plots illustrating trade-offs.
-% Discuss which algorithms dominate or are dominated in different regimes (small vs large n, etc.).
+To study time-quality trade-offs, instances were grouped by problem
+family and by size buckets ($5$--$50$, $50$--$200$, $200$--$1000$, and
+${>}1000$ cities). For each (family, bucket) we computed median runtime
+and normalised cost per algorithm and traced empirical Pareto fronts.
+\Cref{fig:pareto-uniform} summarises the Euclidean synthetic cases: for
+$5$--$50$ cities the front mixes very fast constructive heuristics
+(nearest neighbour and the spatial heuristic) with the exact Held-Karp
+baseline; for $50$--$200$ cities LKH and Concorde dominate on quality
+while Christofides and the spatial heuristic offer quicker but slightly
+worse tours; by $200$--$1000$ cities simulated annealing delivers the
+best speed while LKH/Concorde retain the lowest cost.
+
+In the matrix-explicit family the pattern is
+starker: LKH sits on the cost frontier across all buckets, simple
+nearest neighbour is the fastest but several percent worse, and exact
+Held-Karp is competitive only on tiny instances. The TSPLIB Euclidean
+instances follow a similar pattern, but beyond $1000$ cities simulated
+annealing is the only solver reliably completing within the budget, so
+it forms the sole Pareto-efficient point.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=1.0\linewidth]{pareto.png}
+  \caption{Pareto fronts for uniform Euclidean instances across size
+  buckets.}
+  \label{fig:pareto-uniform}
+\end{figure}
+
+These differences in the Pareto frontiers between instance families (of which there are more than ten in total) emphasise how strongly algorithm performance depends not only on problem size but also on problem type. This further motivates AutoTSP: the selector is explicitly designed to exploit systematic performance variation across instance families.
 
 \subsection{Effect of Instance Features on Algorithm Performance}
-% Explore correlations between instance features and algorithm performance.
-% Use scatter plots, heatmaps, or simple regression models to illustrate patterns.
-% Identify regions of the feature space where particular algorithms tend to perform best.
+Instance-level features (number of cities, metric flag, nearest-neighbour
+probe cost, and simple geometric dispersion) were joined with solver
+outcomes for the training subset. Averaged over size buckets, exact
+methods stay optimal up to around $200$ nodes, metaheuristics remain
+near-optimal up to the largest problems, while constructive heuristics
+degrade rapidly (mean normalised cost ${>}4$ beyond $200$ nodes). The
+selector-style view in \Cref{fig:best-by-size} shows that for $5$--$50$
+nodes three-opt and ant colony are most often best, between $50$ and
+$1000$ nodes LKH (and occasionally Concorde) dominates, and beyond
+$1000$ nodes simulated annealing and the spatial heuristic are the only
+consistent winners.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.6\linewidth]{best_algo_by_size.png}
+  \caption{Frequency with which each algorithm attains the best
+  normalised cost per size bucket.}
+  \label{fig:best-by-size}
+\end{figure}
+
+The geometric probes are also predictive:
+\Cref{fig:feature-probe} plots normalised cost against the
+nearest-neighbour probe. When the probe tour is cheap (within
+approximately $2{\times}$ the best scale) exact methods or LKH often
+yield the best cost; as the probe cost grows (${>}5{\times}$) the front
+collapses to metaheuristics, with exact solvers rarely completing and
+heuristics falling far from the optimum. Metric instances favour
+Concorde/LKH, while non-metric cases rely more on LKH and the cheaper
+three-opt or ant colony tours.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.7\linewidth]{feature_vs_probe.png}
+  \caption{Normalised cost versus nearest-neighbour probe cost coloured
+  by algorithm family (training subset).}
+  \label{fig:feature-probe}
+\end{figure}
 
 \subsection{Discussion of Empirical Findings}
-% Summarise key observations:
-% - Which algorithms are robust vs highly instance-dependent?
-% - Where are the strongest trade-offs?
-% Connect these insights explicitly to the design of AutoTSP in the next section.
-% Highlight any surprising or counter-intuitive results.
+Taken together, the experiments reveal a clear division of labour in the
+portfolio. LKH and simulated annealing are the most robust choices: they
+scale to the largest instances, achieve near-optimal cost in most
+families, and complete reliably. Exact solvers provide the best quality
+on small to medium metric instances but fail often and therefore need
+guard rails. Constructive heuristics (nearest neighbour, two/three-opt)
+are valuable only as extremely fast fallbacks on tiny instances or when
+the expensive methods are unsupported.
+
+The strongest trade-offs follow problem size and probe difficulty.
+Quality-minded fronts on small problems favour exact methods; for
+medium-size metric instances LKH or Concorde give the best balance; on
+very large or hard probes metaheuristics dominate because they are the
+only algorithms completing within the time budget. These observations
+directly motivated the AutoTSP selectors in the next section: simple
+rules over size, metric structure, and nearest-neighbour probes capture
+most of the variation seen here, and the learning-based selector is
+trained to recognise the same transitions (for example, when to back off
+from exact search in favour of LKH or simulated annealing). A slightly
+surprising outcome is how often simulated annealing is the only method
+finishing very large TSPLIB instances, underscoring the need for a
+reliable metaheuristic backbone in the portfolio.
 
 
 
@@ -942,123 +1547,251 @@ successful runs.
 
 
 
+
+\newpage
 \newpage
 \section{AutoTSP: Per-Instance Algorithm Selection}
 \label{sec:autotp}
 
 \subsection{Design Goals and Constraints}
-% State the design goals:
-% - Improve average performance over a distribution of instances.
-% - Maintain low selection overhead (cheap feature computation, fast decision).
-% - Be simple and interpretable (especially for the rule-based baseline).
-% Describe any constraints imposed by the application scenario (e.g., strict time budgets).
+
+The design of AutoTSP is guided by three practical goals. First, the
+selector should improve average performance over a realistic
+distribution of instances, rather than on a few hand–picked examples.
+Second, the additional overhead of feature extraction and selection must
+be small compared to the cost of solving the instance itself. Third, at
+least one selector should be simple and interpretable, so that its
+behaviour can be related directly to the qualitative algorithm
+comparison in \Cref{sec:empirical}.
+
+All experiments in this chapter adopt a fixed per–instance wall–clock
+budget of $10$ seconds for each algorithm, including time spent on
+feature extraction and selection. This is deliberately strict: it forces
+the selector to choose from algorithms that make different trade–offs
+between solution quality and runtime, and it makes timeouts and
+infeasible runs a real concern. Performance is therefore assessed using
+the penalised cost framework of \Cref{subsec:evaluation-metrics}, with
+an oracle selector and several baselines (single best algorithm,
+rule–based selector, Random Forest selector) evaluated on the same
+held–out test set.
 
 \subsection{Rule-Based Selector}
-% Describe the rule-based AutoTSP:
-% - Specify rules (e.g., threshold on problem size, density, metric structure).
-% - Explain how rules were derived from empirical results in \Cref{sec:empirical}.
-% Provide a clear description or pseudocode.
 
-\subsubsection{Construction of Rules from Empirical Data}
-% Detail the process of constructing the rules:
-% - Manual inspection of Pareto fronts.
-% - Partitioning of feature space based on observed algorithm dominance.
-% Possibly include simple decision diagrams or flow charts.
+The rule–based selector provides a transparent baseline that encodes
+simple heuristics over instance size, metric structure, and coarse
+difficulty indicators. It maps the feature vector produced by the
+extractor to one of the portfolio algorithms using a small set of
+thresholds.
 
-\subsubsection{Evaluation of the Rule-Based Selector}
-% Compare rule-based AutoTSP against:
-% - Each individual algorithm.
-% - Simple baselines (e.g., always choose algorithm X).
-% Present results in terms of:
-% - Average performance metrics.
-% - Fraction of instances where AutoTSP matches the oracle best algorithm.
-% - Any improvements on Pareto front coverage.
+At a high level, the rules are as follows.
+\begin{itemize}[noitemsep,topsep=0.5em]
+  \item \textbf{Very small instances.}
+    For $n \leq 12$ cities the selector uses the Held–Karp dynamic
+    programming algorithm, and for $12 < n \leq 30$ it switches to a
+    branch–and–bound solver. On this scale exact methods are fast
+    enough to serve as reliable baselines.
+  \item \textbf{Very large instances.}
+    For $n \geq 4000$ cities the selector falls back to a multi–start
+    nearest–neighbour heuristic. This sacrifices some solution quality
+    in exchange for predictable runtimes on the largest instances.
+  \item \textbf{Non–metric or asymmetric instances.}
+    When the feature extractor identifies a non–metric or asymmetric
+    distance structure, the selector avoids algorithms that exploit
+    Euclidean geometry. For moderately sized non–metric instances it
+    prefers a genetic algorithm when the probe features indicate an
+    “easy” cost scale, and otherwise uses the Lin–Kernighan–style
+    heuristic (LKH), which supports asymmetric cost matrices.
+  \item \textbf{Metric instances.}
+    For metric problems with up to roughly $150$ cities, the selector
+    chooses a 3–opt local–search heuristic; between roughly $150$ and
+    $500$ cities it uses iterated local search. Beyond this range it
+    prefers LKH when the normalised probe features suggest tightly
+    clustered or highly structured instances, and simulated annealing
+    otherwise.
+\end{itemize}
+These rules were derived by combining the qualitative algorithm
+taxonomy in \Cref{sec:algorithms} with exploratory benchmarking plots
+of cost versus city count. They are intentionally simple, and as will be
+seen in \Cref{subsec:selector-eval}, they serve mainly as a strawman
+baseline for the learning–based selector.
 
-\subsection{Learning-Based Selector (Optional)}
-% If implemented:
-% - Describe the learning model (e.g., random forest, logistic regression).
-% - Specify input features and target labels (best algorithm, or performance prediction).
-% - Explain training and validation procedures.
+\subsection{Learning-Based Selector}
+
+The learning–based selector is implemented as a Random Forest classifier
+that predicts, from instance features, which algorithm in the portfolio
+will perform best under the time budget. Training data are derived from
+the benchmark runs described in \Cref{subsec:experimental-protocol}.
 
 \subsubsection{Model Specification and Training}
-% Provide model details and training hyperparameters.
-% Discuss feature normalisation, regularisation, etc.
+
+Each training example corresponds to a single problem instance. For
+every problem in the training split we identify the algorithm that
+achieves the lowest tour cost among all runs that completed within the
+time budget. This algorithm serves as the target label. The input
+features are the scale–normalised descriptors produced by the feature
+extractor, together with structural indicators:
+\begin{itemize}[noitemsep,topsep=0.5em]
+  \item number of cities $n$ and a metric flag \texttt{is\_metric};
+  \item normalised geometric statistics
+    (\texttt{std\_dev\_x\_norm}, \texttt{std\_dev\_y\_norm},
+    \texttt{bbox\_area\_norm}, \texttt{centroid\_dispersion\_norm});
+  \item scale–invariant distance probes
+    (\texttt{landmark\_10\_dist\_norm},
+     \texttt{nn\_probe\_cost\_norm},
+     \texttt{nn\_probe\_cost\_per\_node});
+  \item the nominal time budget and remaining budget, which are fixed at
+    training time.
+\end{itemize}
+The training set is constructed from the portion of the benchmark data
+not used for selector evaluation; in total it contains 688 instances
+covering all synthetic and external families up to the maximum size
+considered. A Random Forest classifier with 100 trees and a fixed
+random seed is fit to this data. Predictions at test time are obtained
+by feeding a new instance through the feature extractor and then
+applying the trained model to the resulting feature vector.
+
+\subsubsection{Feature Importance Analysis}
+
+To understand which features drive the learning–based selector, we
+inspect the Gini importances reported by the Random Forest. The most important feature is simply the number of cities, followed by three scale-related probes: the nearest-neighbour probe cost per node, a normalised landmark distance statistic, and the overall nearest-neighbour probe cost. Together, these four features account
+for over $75\%$ of the total importance.
+
+Normalised geometric dispersion measures
+(\texttt{std\_dev\_x\_norm}, \texttt{std\_dev\_y\_norm},
+\texttt{centroid\_dispersion\_norm}) contribute most of the remaining
+importance, while the metric flag and budget features play a minor role.
+This pattern is consistent with intuition: algorithm performance varies
+strongly with problem size and the typical edge and tour scales, and
+only secondarily with fine details of the geometry.
+
+For completeness, \Cref{fig:rf-feature-importance} shows a bar plot of
+the feature importances of the trained Random Forest model.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{rf_feature_importance.png}
+    \caption{Feature importances of the Random Forest selector on the training set.}
+    \label{fig:rf-feature-importance}
+\end{figure}
 
 \subsubsection{Evaluation and Comparison}
-% Evaluate the learned selector against:
-% - The rule-based selector.
-% - Individual algorithms and baselines.
-% Analyse where the learned selector helps most / fails.
+\label{subsec:selector-eval}
+
+Selector performance is evaluated on a held–out test set of 166
+instances drawn from the combined benchmark distribution. The oracle
+selector chooses, for each instance, the algorithm with the lowest
+penalised cost among all valid runs. As baselines we include the
+rule–based selector, the learning–based selector, and a “single best”
+policy that always runs the empirically best fixed algorithm, which in
+this setting is simulated annealing.
+
+\Cref{tab:selector-summary} reports summary statistics and summarises the main quality–time trade–off.
+All averages are taken over the test instances and costs are
+normalised by the oracle cost on each instance so that values close to
+1 indicate near–optimal performance.
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{@{}lrrrrrrr@{}}
+        \toprule
+        Selector & Top--1 & Top--2 & Avg.\ norm.\ cost & Avg.\ regret & Median regret & Avg.\ time (s) & Solved \\ \midrule
+        Oracle &
+        $1.000$ & $0.994$ & $1.000$ & $0$ & $0$ & $1.66$ & $1.00$ \\
+        Random Forest &
+        $0.633$ & $0.825$ & $1.10$ & $2.96{\times}10^3$ & $0$ & $1.85$ & $0.98$ \\
+        Rule–based &
+        $0.187$ & $0.361$ & $3.82$ & $3.08{\times}10^4$ & $5.51{\times}10^2$ & $3.71$ & $0.70$ \\
+        Single best (SA) &
+        $0.108$ & $0.235$ & $1.30$ & $1.68{\times}10^3$ & $1.35{\times}10^2$ & $0.69$ & $1.00$ \\ \bottomrule
+    \end{tabular}
+    \caption{Selector performance on the held–out test set
+    (166 instances). Top--$k$ columns show accuracy with respect to the
+    oracle, the average normalised cost is the mean of $ \tilde{q}_S(i) /
+    \tilde{q}_{\text{oracle}}(i)$, and regret is measured in absolute
+    penalised cost units.}
+    \label{tab:selector-summary}
+\end{table}
+
+The Random Forest selector matches the oracle exactly on about
+63\% of test instances and is within the oracle top two and top three
+choices on roughly 83\% and 89\% of instances, respectively. Its median
+regret is zero, meaning that on a typical instance it picks an algorithm
+whose penalised cost is identical to the oracle best. In terms of
+average normalised cost it incurs about a $9.5\%$ overhead over the
+oracle ($1.10$ versus $1.00$), while maintaining a high solved fraction
+($98\%$).
+
+The single–best policy (always simulated annealing) has much lower
+top--$k$ accuracy, but because simulated annealing is a strong general
+purpose solver it still achieves a competitive average normalised cost
+($1.30$). The rule–based selector, by contrast, is clearly dominated:
+it has low top--$k$ accuracy, much higher regret, and a solved fraction
+below $70\%$, reflecting its tendency to choose overly ambitious exact
+methods on instances where they frequently time out.
+
+Taken together, these results show that the learning–based AutoTSP
+selector is an effective approximation to the oracle: it matches the
+oracle on most instances, substantially outperforms the hand–crafted
+rule–based selector, and improves over the best fixed algorithm in
+average normalised cost, at the price of a modest increase in overhead.
 
 \subsection{Cost of Selection vs Benefit}
-% Quantify the overhead of AutoTSP:
-% - Time to compute features.
-% - Time to evaluate selection rules or ML model.
-% Compare this overhead to the gains in runtime or quality.
-% Discuss scenarios where selection cost may outweigh benefits (e.g., very small instances).
 
-\subsection{Case Studies}
-% Present a few illustrative instances or families:
-% - Show how AutoTSP chooses different algorithms.
-% - Provide detailed plots of algorithm performance vs chosen strategy.
-% Use these to provide intuition and interpretability for the selector.
+The evaluation includes the full wall–clock time required for feature
+extraction, selection, and running the chosen algorithm. The oracle
+policy has an average per–instance time of about $1.66$ seconds, while
+the Random Forest selector takes about $1.85$ seconds. The difference
+is explained almost entirely by the additional time needed to evaluate
+the Random Forest and, on some instances, by choosing slightly heavier
+algorithms than the oracle. Compared to the single–best simulated
+annealing policy (about $0.69$ seconds on average), the learning–based
+selector roughly doubles the average time but reduces the normalised
+cost from $1.30$ to $1.10$.
 
+On very small instances exact methods often solve the problem in
+milliseconds, and any selection overhead is comparatively large. In this
+regime the single–best policy is already close to optimal and there is
+little to gain from AutoTSP. The benefits of per–instance selection are
+most pronounced in the medium–size range where the portfolio contains
+algorithms with very different cost–quality profiles and the Random
+Forest can steer instances towards the subset of algorithms that behave
+well on that region of the instance space.
 
+\subsection{Case Studies: Selector Behaviour Across Scale}
 
+To gain a deeper intuition into how the selectors navigate the instance space, we examine their decisions as the problem size increases. This analysis helps visualise not just \emph{how well} the selectors perform, but \emph{why} they make specific choices.
 
+\Cref{fig:selector-choices} visualises the specific algorithms chosen by each policy for every instance in the test set, ordered by the number of cities (log scale). The bottom row (Oracle) reveals the "ground truth" of the algorithm landscape. We observe three distinct regimes:
+\begin{enumerate}
+    \item \textbf{Small scale ($n < 20$):} The Oracle almost exclusively selects exact methods, specifically \texttt{branch\_and\_bound} (pink) and \texttt{held\_karp} (light purple).
+    \item \textbf{Medium scale ($20 < n < 1000$):} The landscape becomes heterogeneous. While some constructive heuristics appear, the region is heavily dominated by the Lin-Kernighan heuristic (\texttt{lkh}, orange), which offers an excellent balance of speed and quality for geometric instances in this range.
+    \item \textbf{Large scale ($n > 1000$):} As time budgets become tight relative to problem size, the Oracle shifts toward robust metaheuristics, primarily \texttt{simulated\_annealing} (green) and occasionally \texttt{three\_opt} (dark pink).
+\end{enumerate}
 
+The \textbf{Random Forest} (second row) faithfully reproduces this complex texture. Crucially, it successfully identifies the "LKH regime" in the middle of the distribution (indicated by the density of orange points), a pattern the manual rules missed entirely.
 
+In contrast, the \textbf{Rule-based} selector (third row) exhibits rigid, "blocky" behaviour. It transitions abruptly from exact methods to \texttt{genetic\_algorithm} (yellow) and \texttt{three\_opt}, completely bypassing the high-performing LKH algorithm. The \textbf{Single Best} policy (top row) is visually monotonous, selecting \texttt{simulated\_annealing} regardless of instance structure.
 
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\linewidth]{selection_algorithms_vs_size.png}
+    \caption{Algorithm choices vs city count on the test set. The Random Forest (second row) mimics the textural shifts of the Oracle (bottom row) far better than the rigid Rule-based approach.}
+    \label{fig:selector-choices}
+\end{figure}
 
+We can quantify the success of these choices by looking at the cumulative accuracy. \Cref{fig:cumulative-accuracy} plots the cumulative fraction of instances where the selector matched the Oracle exactly, sorted by problem size.
 
+The \textbf{Random Forest} (orange line) separates itself early. After an initial learning curve on very small instances—where the penalty for choosing the "wrong" exact solver is high—it climbs steeply between $n=30$ and $n=100$. This corresponds to the regime where distinguishing between LKH, genetic algorithms, and local search is difficult for humans but statistically discernible for the model. It stabilises at a cumulative accuracy of over $60\%$.
 
+The \textbf{Rule-based} selector (green line), however, plateaued below $20\%$. Its inability to select the optimal solver in the complex middle-size regime prevents it from recovering. Similarly, the \textbf{Single Best} algorithm (red line) hovers near zero. While Simulated Annealing is a robust "safe" choice (low regret), it is rarely the \emph{strictly optimal} choice (low accuracy) for any specific instance, usually being beaten by a faster heuristic on small graphs or a more specialised metaheuristic on structured graphs.
 
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\linewidth]{selection_cumulative_accuracy.png}
+    \caption{Cumulative accuracy vs Oracle by city count. The Random Forest (orange) demonstrates a strong ability to adapt to increasing complexity, whereas the Rule-based and Single Best strategies stagnate.}
+    \label{fig:cumulative-accuracy}
+\end{figure}
 
-
-
-
-
-
-
-
-\newpage
-\section{Conclusion and Future Work}
-\label{sec:conclusion}
-
-\subsection{Summary of Contributions}
-% Recap the main contributions of the thesis.
-% Emphasise the empirical characterisation, AutoTSP design, and key findings.
-
-\subsection{Limitations}
-% Discuss limitations:
-% - Limited algorithm portfolio.
-% - Specific instance families and sizes.
-% - Assumptions (e.g., symmetric Euclidean TSP only).
-% Note how these limitations affect the generality of the results.
-
-\subsection{Future Directions}
-% Suggest extensions:
-% - Larger or different algorithm portfolios.
-% - Richer instance features or more advanced ML methods.
-% - Extension to other combinatorial problems (VRP, scheduling, etc.).
-% - Integration into real-world systems or benchmarks.
-
-\newpage
-\appendix
-
-\section{Additional Experimental Results}
-% Extra plots, tables, and figures that support the main text but are too detailed to include earlier.
-
-\section{Implementation Details and Code Listings}
-% Include key code snippets (or point to the repository) for:
-% - Algorithm implementations/wrappers.
-% - AutoTSP rule-based and ML-based selectors.
-% - Experimental harness and data processing scripts.
-
-\newpage
-\printbibliography
-
-\end{document}
 
 
 
@@ -1081,7 +1814,109 @@ successful runs.
 \section{Conclusion and Future Work}
 \label{sec:conclusion}
 
+This report has explored per-instance algorithm selection for the
+Traveling Salesman Problem through the design and evaluation of
+\emph{AutoTSP}. Starting from a heterogeneous benchmark of TSP and
+TSP-like instances and a portfolio of diverse solvers, the work has
+characterised how TSP algorithm performance varies across instance
+families, and used this understanding to construct practical selection
+rules that operate under tight time budgets.
 
+The empirical analysis in \Cref{sec:empirical} addressed the first
+research question on instance-dependent behaviour. Across synthetic and
+real-world instance families and a wide range of sizes, no single
+algorithm came close to dominating the quality–runtime trade-off.
+Exact methods and specialised solvers such as Concorde and
+Lin–Kernighan achieved near-optimal tours on small and medium metric
+instances but often timed out or failed on larger or more irregular
+problems. Simple constructive heuristics and local search were fast but
+lost substantial ground in solution quality as size increased.
+Metaheuristics such as simulated annealing and ant colony optimisation
+proved to be robust and often formed the only viable Pareto-efficient
+choices on large or difficult instances. These findings confirm
+Hypothesis~H1 and provide a concrete picture of the “no free lunch”
+intuition in a single, well-studied problem domain.
+
+Building on this, \Cref{sec:autotp} studied the value of per-instance
+algorithm selection (RQ2) and the potential benefits of learning-based
+selection over manual rules (RQ3). The AutoTSP pipeline combines a
+lightweight feature extractor with either a rule-based selector or a
+Random Forest classifier. Evaluated on a held-out test set using a
+failure-aware penalised cost, the learning-based selector matched the
+oracle choice on roughly two thirds of instances and was within the
+oracle’s top two choices on most of the rest. In terms of average
+normalised cost it incurred only a modest overhead over the oracle,
+while outperforming both the best fixed algorithm (simulated annealing)
+and the rule-based policy. The rule-based selector, although simple and
+interpretable, was overly optimistic about exact methods and failed to
+adapt to the more subtle transitions between regimes where different
+heuristics and metaheuristics are preferable. Taken together, these
+results confirm that per-instance selection is beneficial (answering
+RQ2) and that a learning-based selector provides a clear improvement
+over hand-crafted rules (supporting H3), while also showing that H2,
+which posited that the rule-based selector would beat any single fixed
+algorithm, is not supported by the data.
+
+At the same time, the work has several limitations. The algorithm
+portfolio, while diverse, is still relatively small, and some solvers
+are simple Python implementations rather than highly tuned systems.
+The instance features are deliberately low-dimensional and hand-designed;
+they capture global size and geometry but ignore finer-grained
+structure such as local clustering patterns or graph-theoretic
+properties. AutoTSP makes a single, one-shot algorithm choice per
+instance and does not adapt its decision based on intermediate progress
+of the solver. Finally, the selectors are trained and evaluated on a
+fixed mixture of synthetic and benchmark instances; their behaviour on
+very different application domains remains to be tested.
+
+These limitations suggest several directions for future work:
+
+\begin{itemize}[noitemsep,topsep=0.5em]
+  \item \textbf{Richer portfolios and configurations.}
+    Extending the portfolio to include more modern or specialised TSP
+    solvers, as well as different parameter settings of existing
+    algorithms, would turn AutoTSP into a joint selection and
+    configuration system. This would allow the selector to choose, for
+    example, between short and long runs of the same metaheuristic
+    depending on instance difficulty.
+  \item \textbf{Improved instance representations.}
+    Beyond simple scalar features, one could explore graph-based
+    embeddings or neural networks that operate directly on distance
+    matrices or coordinates. Such models might capture structural
+    patterns that are invisible to the current feature set and further
+    close the gap to the oracle selector.
+  \item \textbf{Dynamic and multi-step selection.}
+    Rather than choosing a single algorithm once, AutoTSP could be
+    extended to schedule multiple solvers or to adapt choices based on
+    partial progress, for example by terminating an underperforming run
+    early and switching to an alternative. This would move from a
+    one-shot portfolio decision to a dynamic portfolio or bandit
+    setting.
+  \item \textbf{Transfer to other problem domains.}
+    The methodology used here—building a benchmark, analysing
+    instance-dependent performance, and training selectors on cheap
+    features—applies beyond the TSP. Extending the approach to related
+    problems such as vehicle routing, scheduling, or SAT would test how
+    well the ideas transfer and whether common feature patterns or
+    selection strategies emerge.
+  \item \textbf{User-facing integration.}
+    Finally, AutoTSP could be packaged as a small library or service
+    that exposes a simple “solve TSP” interface while hiding the
+    underlying portfolio and selection logic. This would turn the
+    prototype presented in this report into a practical tool for
+    researchers and practitioners who want reasonable TSP solutions
+    without committing to a single solver.
+\end{itemize}
+
+Overall, the report shows that even for a single, classical problem like
+the TSP, algorithm selection is both necessary and effective. A modest
+amount of structure in the instance distribution, combined with cheap
+features and standard supervised learning, is enough to build a selector
+that tracks an oracle surprisingly closely and improves over natural
+baselines. In this sense, AutoTSP serves as a concrete example of how
+meta-optimisation ideas can be made practical at the scale of individual
+instances, and as a small step towards more adaptive optimisation
+systems in combinatorial settings.
 
 \newpage
 \printbibliography

@@ -1,51 +1,51 @@
 {
-  "count": 1004,
+  "count": 906,
   "num_cities": {
     "min": 5,
     "max": 1904711,
-    "median": 102.0,
-    "mean": 6343.1065737051795,
+    "median": 82.0,
+    "mean": 6802.8620309050775,
     "p10": 20.0,
-    "p90": 4445.700000000003,
-    "count": 1004
+    "p90": 3108.0,
+    "count": 906
   },
   "metrics": {
-    "explicit": 442,
-    "euclidean": 466,
-    "manhattan": 48,
-    "asymmetric": 24,
-    "asymmetric_euclidean": 24
+    "euclidean": 396,
+    "asymmetric": 17,
+    "manhattan": 34,
+    "asymmetric_euclidean": 17,
+    "explicit": 442
   },
   "origins": {
+    "synthetic": 238,
     "matrix_file": 425,
-    "tsplib": 243,
-    "synthetic": 336
+    "tsplib": 243
   },
   "problem_types": {
+    "grid_euclidean": 17,
+    "asymmetric_random": 17,
+    "uniform_manhattan": 17,
+    "circular_euclidean": 17,
+    "noisy_euclidean": 17,
+    "corridor_euclidean": 17,
+    "clustered_euclidean": 17,
+    "directed_euclidean_skew": 17,
     "matrix_explicit": 425,
-    "tsplib_euc_2d": 208,
-    "tsplib_geom": 2,
+    "noisy_manhattan": 17,
+    "anisotropic_euclidean": 17,
+    "uniform_euclidean": 17,
+    "rotated_grid_euclidean": 17,
+    "clustered_outliers": 17,
+    "ring_clusters": 17,
     "tsplib_geo": 10,
-    "tsplib_att": 2,
     "tsplib_explicit": 17,
+    "tsplib_euc_2d": 208,
+    "tsplib_att": 2,
     "tsplib_ceil_2d": 4,
-    "uniform_euclidean": 24,
-    "clustered_euclidean": 24,
-    "grid_euclidean": 24,
-    "circular_euclidean": 24,
-    "uniform_manhattan": 24,
-    "rotated_grid_euclidean": 24,
-    "ring_clusters": 24,
-    "corridor_euclidean": 24,
-    "clustered_outliers": 24,
-    "anisotropic_euclidean": 24,
-    "noisy_euclidean": 24,
-    "noisy_manhattan": 24,
-    "asymmetric_random": 24,
-    "directed_euclidean_skew": 24
+    "tsplib_geom": 2
   },
   "directed": {
-    "true": 473,
-    "false": 531
+    "false": 447,
+    "true": 459
   }
 }

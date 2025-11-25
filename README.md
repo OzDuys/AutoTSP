@@ -12,6 +12,11 @@ The layout of the repo mirrors this pipeline.
   - `core.py` – end‑to‑end `AutoTSP` pipeline (features → selector → solver).
   - `features.py` – fast instance feature extraction.
   - `solvers/` – solver implementations and taxonomy utilities.
+    - `approx/` – `christofides`
+    - `exact/` – `branch_and_bound`, `held_karp`, `cutting_plane`, `concorde_exact`
+    - `heuristics/` – `simple_nearest_neighbor`, `multi_start_nearest_neighbor`, `two_opt`, `three_opt`, `shinka_spatial_heuristic`
+    - `meta/` – `simulated_annealing`, `genetic_algorithm`, `iterated_local_search`, `ant_colony`, `lkh` (handles symmetric and asymmetric)
+      - `LKH` – bundled LKH 3.0.13 binary (used by the `lkh`/`lkh_atsp` solvers; no env var required).
   - `selectors/` + `selector.py` – rule‑based and RandomForest selectors.
 - `Data/Instance Datasets/` – instance generation, ingestion, and statistics:
   - `generate_synthetic_problems.py` – synthetic (now richer) + TSPLIB generation. Common outputs:
@@ -78,9 +83,9 @@ python "Scripts/run_algorithms.py" \
 
 By default this:
 
-- reads `Data/Instance Datasets/problems.jsonl`
+- reads the combined problems set (`Data/Instance Datasets/tsp_problems_combined.jsonl`)
 - writes/extends `Data/Instance-Algorithm Datasets/Full Dataset/results.jsonl`
-- enforces a per‑run time budget (default 5 seconds) and optional memory limit.
+- enforces a per‑run time budget (default 10 seconds in the script; override with `--time-limit`) and optional memory limit.
 
 You can restrict algorithms and adjust budgets with flags such as `--algorithms`, `--time-limit`, and `--memory-limit`.
 
@@ -144,12 +149,18 @@ Visit:
 
 Solvers are implemented in `AutoTSP/solvers/` and exposed via `AutoTSP.get_solver`. They are grouped into families for analysis:
 
-- **Exact** – e.g. branch‑and‑bound, Held–Karp, cutting‑plane, Concorde‑based solvers.
-- **Approximation** – e.g. Christofides.
-- **Heuristic** – classical constructive and local‑search heuristics.
-- **Metaheuristic** – e.g. simulated annealing, genetic algorithms, iterated local search, ant colony.
+- **Exact** – branch‑and‑bound, Held–Karp, cutting‑plane, Concorde‑based solvers.
+- **Approximation** – Christofides.
+- **Heuristic** – constructive/local search (e.g. nearest‑neighbour variants, 2‑opt/3‑opt, `shinka_spatial_heuristic`).
+- **Metaheuristic** – simulated annealing, genetic algorithms, iterated local search, ant colony, Lin–Kernighan (`lkh`, `lkh_atsp`).
 
-Each solver implements a `solve(dist_matrix, time_limit=5.0)` method and returns an `AlgorithmResult`.
+Each solver implements a `solve(dist_matrix, time_limit=5.0)` method and returns an `AlgorithmResult`. The `lkh`/`lkh_atsp` solvers use the bundled LKH binary under `AutoTSP/solvers/meta/LKH` if no system binary is found.
+
+Registered algorithms (via `AutoTSP.solvers`):
+- Exact: `branch_and_bound`, `held_karp`, `cutting_plane`, `concorde_exact`
+- Approximation: `christofides`
+- Heuristic: `simple_nearest_neighbor`, `multi_start_nearest_neighbor`, `two_opt`, `three_opt`, `shinka_spatial_heuristic`
+- Metaheuristic: `simulated_annealing`, `genetic_algorithm`, `iterated_local_search`, `ant_colony`, `lkh`, `lkh_atsp`
 
 ## Extending AutoTSP
 

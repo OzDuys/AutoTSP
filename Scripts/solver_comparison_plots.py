@@ -4,20 +4,23 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
-from typing import Iterable, List
+from typing import List, Sequence
 
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
+from matplotlib.axes import Axes
 
 
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
-INSTANCE_ALGO_DIR = PROJECT_ROOT / "Instance-Algorithm Datasets"
-DEFAULT_RESULTS_PATH = INSTANCE_ALGO_DIR / "Full Dataset" / "results.jsonl"
-DEFAULT_FIGURE_PATH = INSTANCE_ALGO_DIR / "Full Dataset" / "pngs" / "results.png"
+INSTANCE_ALGO_DIR = PROJECT_ROOT / "Data/Instance-Algorithm Datasets"   # Data/Instance-Algorithm Datasets
+DEFAULT_RESULTS_PATH = INSTANCE_ALGO_DIR / "combined_results.jsonl"
+DEFAULT_FIGURE_PATH = PROJECT_ROOT / "Scripts" / "Solver Comparison Plots" / "combined_results.png"
+FAMILIES_TO_PLOT = ["approximation", "exact", "heuristic", "metaheuristic"]
+SMOOTHING_ALPHA = 0.1
 
 
-def parse_args(raw_args: Iterable[str] | None = None) -> argparse.Namespace:
+def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Visualise TSP benchmarking results with standard deviation bands.")
     parser.add_argument(
         "--results",
@@ -76,34 +79,69 @@ def sanitize(name: str | None) -> str:
     return "".join(ch if ch.isalnum() else "_" for ch in name.lower())
 
 
-def lineplot_with_sd(data: pd.DataFrame, hue: str, title_prefix: str, path: pathlib.Path) -> None:
-    sns.set_theme(style="whitegrid")
-    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+def aggregate_and_smooth(data: pd.DataFrame, value_col: str, hue: str, alpha: float) -> pd.DataFrame:
+    required_cols = {hue, "num_cities", value_col}
+    missing = required_cols.difference(data.columns)
+    if missing:
+        raise ValueError(f"Missing columns for plotting: {', '.join(sorted(missing))}")
+
+    subset = data[[hue, "num_cities", value_col]].dropna()
+    if subset.empty:
+        return pd.DataFrame(columns=[hue, "num_cities", "smoothed"])
+
+    grouped = (
+        subset.groupby([hue, "num_cities"], as_index=False)
+        .agg(mean=(value_col, "mean"))
+        .sort_values([hue, "num_cities"])
+        .reset_index(drop=True)
+    )
+
+    grouped["smoothed"] = (
+        grouped.groupby(hue, group_keys=False)["mean"].transform(lambda s: s.ewm(alpha=alpha, adjust=False).mean())
+    )
+    return grouped
+
+
+def plot_metric_with_band(
+    ax: Axes,
+    aggregated: pd.DataFrame,
+    hue: str,
+    palette_map: dict,
+) -> None:
+    if aggregated.empty:
+        ax.text(0.5, 0.5, "No data to display", ha="center", va="center", transform=ax.transAxes)
+        return
 
     sns.lineplot(
-        data=data,
+        data=aggregated,
         x="num_cities",
-        y="elapsed",
+        y="smoothed",
         hue=hue,
-        estimator="mean",
-        errorbar="sd",
-        err_style="band",
-        ax=axes[0],
+        estimator=None,
+        palette=palette_map,
+        ax=ax,
     )
+
+
+def lineplot_with_sd(data: pd.DataFrame, hue: str, title_prefix: str, path: pathlib.Path) -> None:
+    sns.set_theme(style="whitegrid")
+    fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+
+    elapsed_agg = aggregate_and_smooth(data, "elapsed", hue, SMOOTHING_ALPHA)
+    cost_agg = aggregate_and_smooth(data, "cost", hue, SMOOTHING_ALPHA)
+    unique_hues = data[hue].dropna().unique().tolist()
+    if unique_hues:
+        palette = sns.color_palette("tab10", n_colors=len(unique_hues))
+        palette_map = {label: palette[idx] for idx, label in enumerate(unique_hues)}
+    else:
+        palette_map = {}
+
+    plot_metric_with_band(axes[0], elapsed_agg, hue, palette_map)
     axes[0].set_title(f"{title_prefix} Runtime (mean ± 1σ)")
     axes[0].set_xlabel("Number of Cities")
     axes[0].set_ylabel("Elapsed Time (s)")
 
-    sns.lineplot(
-        data=data,
-        x="num_cities",
-        y="cost",
-        hue=hue,
-        estimator="mean",
-        errorbar="sd",
-        err_style="band",
-        ax=axes[1],
-    )
+    plot_metric_with_band(axes[1], cost_agg, hue, palette_map)
     axes[1].set_title(f"{title_prefix} Tour Cost (mean ± 1σ)")
     axes[1].set_xlabel("Number of Cities")
     axes[1].set_ylabel("Tour Cost")
@@ -116,8 +154,8 @@ def lineplot_with_sd(data: pd.DataFrame, hue: str, title_prefix: str, path: path
     if handles:
         axes[0].get_legend().remove()
         axes[1].get_legend().remove()
-        fig.legend(handles, labels, loc="upper center", ncol=max(1, len(labels)))
-    fig.tight_layout(rect=(0, 0, 1, 0.95))
+        fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, 0.01), ncol=5, fontsize='small')
+    fig.tight_layout(rect=(0, 0.1, 1, 1))
 
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=200)
@@ -137,6 +175,9 @@ def render(df: pd.DataFrame, output: pathlib.Path) -> None:
     overall_path = output.with_name(f"{output.stem}_overall_algorithms{output.suffix}")
     lineplot_with_sd(completed, hue="algorithm", title_prefix="Overall", path=overall_path)
     if "algorithm_category" in completed.columns:
+        completed["algorithm_category"] = completed["algorithm_category"].fillna("uncategorised")
+        completed["algorithm_category_normalised"] = completed["algorithm_category"].str.lower()
+
         overall_cat_path = output.with_name(f"{output.stem}_overall_categories{output.suffix}")
         lineplot_with_sd(
             completed,
@@ -145,49 +186,21 @@ def render(df: pd.DataFrame, output: pathlib.Path) -> None:
             path=overall_cat_path,
         )
 
-    # Per-problem-type plots
-    for problem_type, subset in completed.groupby(completed["problem_type"].fillna("unknown")):
-        safe_name = sanitize(problem_type)
-        pretty_name = problem_type.replace("_", " ").title()
-        title_prefix = pretty_name
-        algo_path = output.with_name(f"{output.stem}_{safe_name}_algorithms{output.suffix}")
-        lineplot_with_sd(subset, hue="algorithm", title_prefix=title_prefix, path=algo_path)
-
-        if "algorithm_category" in subset.columns:
-            category_path = output.with_name(f"{output.stem}_{safe_name}_categories{output.suffix}")
+        for family in FAMILIES_TO_PLOT:
+            subset = completed[completed["algorithm_category_normalised"] == family]
+            if subset.empty:
+                continue
+            pretty_name = family.replace("_", " ").title()
+            family_path = output.with_name(f"{output.stem}_family_{sanitize(family)}{output.suffix}")
             lineplot_with_sd(
                 subset,
-                hue="algorithm_category",
-                title_prefix=f"{pretty_name} Categories",
-                path=category_path,
+                hue="algorithm",
+                title_prefix=f"{pretty_name} Algorithms",
+                path=family_path,
             )
 
-    # Per-origin plots
-    if "origin" in completed.columns:
-        for origin, subset in completed.groupby(completed["origin"].fillna("unknown")):
-            safe_name = sanitize(origin)
-            pretty_name = origin.replace("_", " ").title()
-            origin_algo_path = output.with_name(f"{output.stem}_origin_{safe_name}_algorithms{output.suffix}")
-            lineplot_with_sd(subset, hue="algorithm", title_prefix=f"{pretty_name} Origin", path=origin_algo_path)
-            if "algorithm_category" in subset.columns:
-                origin_cat_path = output.with_name(f"{output.stem}_origin_{safe_name}_categories{output.suffix}")
-                lineplot_with_sd(
-                    subset,
-                    hue="algorithm_category",
-                    title_prefix=f"{pretty_name} Origin Categories",
-                    path=origin_cat_path,
-                )
 
-    # Focused plots per algorithm family
-    if "algorithm_category" in completed.columns:
-        for category, subset in completed.groupby(completed["algorithm_category"].fillna("uncategorised")):
-            safe_name = sanitize(category)
-            pretty_name = category.replace("_", " ").title()
-            cat_algo_path = output.with_name(f"{output.stem}_family_{safe_name}{output.suffix}")
-            lineplot_with_sd(subset, hue="algorithm", title_prefix=f"{pretty_name} Algorithms", path=cat_algo_path)
-
-
-def main(raw_args: Iterable[str] | None = None) -> None:
+def main(raw_args: Sequence[str] | None = None) -> None:
     args = parse_args(raw_args)
     if not args.results.exists():
         raise SystemExit(f"No results file found at {args.results}")

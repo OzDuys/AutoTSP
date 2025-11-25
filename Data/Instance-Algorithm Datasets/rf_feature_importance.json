@@ -1,0 +1,38 @@
+[
+  {
+    "feature": "n_nodes",
+    "importance": 0.28320758327983525
+  },
+  {
+    "feature": "nn_probe_cost_per_node",
+    "importance": 0.1724280988709739
+  },
+  {
+    "feature": "landmark_10_dist_norm",
+    "importance": 0.1630912713030227
+  },
+  {
+    "feature": "nn_probe_cost_norm",
+    "importance": 0.16266003435944235
+  },
+  {
+    "feature": "std_dev_y_norm",
+    "importance": 0.06885819748500664
+  },
+  {
+    "feature": "std_dev_x_norm",
+    "importance": 0.06766680291853228
+  },
+  {
+    "feature": "centroid_dispersion_norm",
+    "importance": 0.06712041473904756
+  },
+  {
+    "feature": "bbox_area_norm",
+    "importance": 0.011453957672414092
+  },
+  {
+    "feature": "is_metric",
+    "importance": 0.0035136393717252303
+  }
+]

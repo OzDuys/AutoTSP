@@ -4,13 +4,19 @@ from AutoTSP.solvers.approx import ChristofidesSolver
 from AutoTSP.solvers.base import AlgorithmResult, BaseSolver, SolverSpec
 from AutoTSP.solvers.exact import BranchAndBoundSolver, ConcordeExactSolver, CuttingPlaneSolver, HeldKarpSolver
 from AutoTSP.solvers.heuristics import (
-    BaselineTSPLibSolver,
     MultiStartNearestNeighborSolver,
-    ThreeOptSolver,
+    ShinkaSpatialHeuristicSolver,
     SimpleNearestNeighborSolver,
+    ThreeOptSolver,
     TwoOptSolver,
 )
-from AutoTSP.solvers.meta import AntColonySolver, GeneticAlgorithmSolver, IteratedLocalSearchSolver, SimulatedAnnealingSolver
+from AutoTSP.solvers.meta import (
+    AntColonySolver,
+    GeneticAlgorithmSolver,
+    IteratedLocalSearchSolver,
+    LkhSolver,
+    SimulatedAnnealingSolver,
+)
 from AutoTSP.utils.taxonomy import AlgorithmFamily
 
 SOLVER_SPECS: dict[str, SolverSpec] = {
@@ -68,11 +74,11 @@ SOLVER_SPECS: dict[str, SolverSpec] = {
         family=TwoOptSolver.family,
         supports_directed=TwoOptSolver.supports_directed,
     ),
-    BaselineTSPLibSolver.name: SolverSpec(
-        name=BaselineTSPLibSolver.name,
-        cls=BaselineTSPLibSolver,
-        family=BaselineTSPLibSolver.family,
-        supports_directed=BaselineTSPLibSolver.supports_directed,
+    ShinkaSpatialHeuristicSolver.name: SolverSpec(
+        name=ShinkaSpatialHeuristicSolver.name,
+        cls=ShinkaSpatialHeuristicSolver,
+        family=ShinkaSpatialHeuristicSolver.family,
+        supports_directed=ShinkaSpatialHeuristicSolver.supports_directed,
     ),
     SimulatedAnnealingSolver.name: SolverSpec(
         name=SimulatedAnnealingSolver.name,
@@ -91,6 +97,12 @@ SOLVER_SPECS: dict[str, SolverSpec] = {
         cls=IteratedLocalSearchSolver,
         family=IteratedLocalSearchSolver.family,
         supports_directed=IteratedLocalSearchSolver.supports_directed,
+    ),
+    LkhSolver.name: SolverSpec(
+        name=LkhSolver.name,
+        cls=LkhSolver,
+        family=LkhSolver.family,
+        supports_directed=LkhSolver.supports_directed,
     ),
     AntColonySolver.name: SolverSpec(
         name=AntColonySolver.name,

@@ -15,7 +15,7 @@ import numpy as np
 
 # Paths relative to this script (Instance Datasets root).
 THIS_DIR = pathlib.Path(__file__).resolve().parent
-DEFAULT_PROBLEMS_PATH = THIS_DIR / "problems.jsonl"
+DEFAULT_PROBLEMS_PATH = THIS_DIR / "tsp_problems_synth.jsonl"
 
 
 # ---------------------------------------------------------------------------
@@ -508,13 +508,13 @@ def parse_args(raw_args: Iterable[str] | None = None) -> argparse.Namespace:
         "--counts",
         nargs="+",
         type=int,
-        default=[5, 10, 20, 50, 100, 200, 300, 500, 750, 1000, 2000, 5000],
+        default=[5,8, 10,12,16, 20,30, 50,70, 100,150, 200, 300, 500, 750, 1000, 2000],
         help="City counts to generate for synthetic instances.",
     )
     parser.add_argument(
         "--instances-per-count",
         type=int,
-        default=10,
+        default=1,
         help="Number of synthetic instances per city count (per problem type).",
     )
     parser.add_argument(

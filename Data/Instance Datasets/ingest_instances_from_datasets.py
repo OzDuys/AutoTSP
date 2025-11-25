@@ -9,18 +9,18 @@ from typing import Iterable, Optional
 
 import numpy as np
 
-# Ensure we can import generate_problems helpers
+# Ensure we can import generate_synthetic_problems helpers
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-import generate_problems  # type: ignore
-from generate_problems import compute_problem_id, parse_tsplib, record_to_jsonable  # type: ignore
+import generate_synthetic_problems  # type: ignore
+from generate_synthetic_problems import compute_problem_id, parse_tsplib, record_to_jsonable  # type: ignore
 
 
 INSTANCE_DATASETS_DIR = pathlib.Path(__file__).resolve().parent
-DEFAULT_ROOT_DIR = INSTANCE_DATASETS_DIR / "datasets"
-DEFAULT_PROBLEMS_PATH = INSTANCE_DATASETS_DIR / "problems.jsonl"
+DEFAULT_ROOT_DIR = "Data/Instance Datasets/External TSP datasets"
+DEFAULT_PROBLEMS_PATH = INSTANCE_DATASETS_DIR / "tsp_problems_external.jsonl"
 
 
 def parse_args(raw_args: Iterable[str] | None = None) -> argparse.Namespace:

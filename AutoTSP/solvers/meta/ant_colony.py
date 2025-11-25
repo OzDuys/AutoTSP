@@ -47,7 +47,9 @@ class AntColonySolver(BaseSolver):
             )
 
         pheromone = np.ones((n, n))
-        heuristic = 1.0 / (dist_matrix + np.eye(n))
+        # Avoid divide-by-zero and non-finite weights; leave diagonal at zero.
+        safe_dist = np.where(dist_matrix <= 0, 1e-9, dist_matrix)
+        heuristic = 1.0 / safe_dist
         np.fill_diagonal(heuristic, 0.0)
 
         rng = np.random.default_rng()
@@ -80,7 +82,7 @@ class AntColonySolver(BaseSolver):
                             candidates.append(city)
                         weights = np.array(weights, dtype=float)
                         total = weights.sum()
-                        if total <= 0:
+                        if total <= 0 or not np.isfinite(total):
                             weights = np.ones_like(weights) / len(weights)
                         else:
                             weights = weights / total

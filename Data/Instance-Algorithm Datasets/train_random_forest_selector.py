@@ -9,11 +9,9 @@ from typing import Any, Dict, Iterable, List, Tuple
 
 import joblib
 
-# Ensure we can import AutoTSP from project root.
+# Ensure we can import AutoTSP from the repository root.
 SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
-PROJECT_ROOT = SCRIPT_DIR.parent
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -25,6 +23,19 @@ DEFAULT_MODEL_OUT = INSTANCE_ALGO_DIR / "Full Dataset" / "random_forest_selector
 
 from AutoTSP.features import FeatureExtractor
 from AutoTSP.selectors import RandomForestSelector
+
+# Feature keys used for RF training (scale-invariant and structural where possible).
+RF_FEATURE_KEYS: list[str] = [
+    "n_nodes",
+    "is_metric",
+    "std_dev_x_norm",
+    "std_dev_y_norm",
+    "bbox_area_norm",
+    "centroid_dispersion_norm",
+    "landmark_10_dist_norm",
+    "nn_probe_cost_norm",
+    "nn_probe_cost_per_node",
+]
 
 
 def parse_args(raw_args: Iterable[str] | None = None) -> argparse.Namespace:
@@ -108,9 +119,11 @@ def build_training_rows(problems: List[dict], results: List[dict], time_budget: 
             continue
         features = FeatureExtractor.extract(problem).values
         features = dict(features)
-        features["time_budget"] = float(time_budget)
-        features["remaining_budget"] = float(time_budget)  # training data assumed full budget available
-        rows.append({"problem_id": pid, "best_solver": algo, "cost": cost, "elapsed": elapsed, "features": features})
+        # Restrict to a stable, scale-invariant feature subset for RF training.
+        filtered = {k: features.get(k) for k in RF_FEATURE_KEYS}
+        filtered["time_budget"] = float(time_budget)
+        filtered["remaining_budget"] = float(time_budget)  # training data assumed full budget available
+        rows.append({"problem_id": pid, "best_solver": algo, "cost": cost, "elapsed": elapsed, "features": filtered})
     return rows
 
 

@@ -4,31 +4,37 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import multiprocessing as mp
 import pathlib
 import signal
 import sys
+from collections import deque
 from dataclasses import asdict
 from typing import Iterable, Iterator, Tuple, Any
 
 import numpy as np
+try:
+    from tqdm import tqdm
+except ImportError:
+    # Fallback if tqdm is not installed.
+    def tqdm(iterable, total=None, **kwargs):
+        return iterable
 
-# Resolve project layout relative to this script.
-PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
+# Resolve project layout relative to this script (two levels up to repo root).
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-INSTANCE_DATASETS_DIR = PROJECT_ROOT / "Instance Datasets"
-INSTANCE_ALGO_DIR = PROJECT_ROOT / "Instance-Algorithm Datasets"
-DEFAULT_PROBLEMS_PATH = INSTANCE_DATASETS_DIR / "problems.jsonl"
-DEFAULT_RESULTS_PATH = INSTANCE_ALGO_DIR / "Full Dataset" / "results.jsonl"
+DEFAULT_PROBLEMS_PATH = "Data/Instance Datasets/tsp_problems_combined.jsonl"
+DEFAULT_RESULTS_PATH = "Data/Instance-Algorithm Datasets/combined_results.jsonl"
 
 from AutoTSP import AlgorithmResult, SOLVER_SPECS, get_solver
 
 # Build callables for multiprocessing while keeping the solver metadata handy.
 ALGORITHM_SPECS = SOLVER_SPECS
 ALGORITHMS = {
-    name: (lambda dist_matrix, time_limit=5.0, _spec=spec: _spec.cls().solve(dist_matrix, time_limit=time_limit))
+    name: (lambda dist_matrix, time_limit=10.0, _spec=spec: _spec.cls().solve(dist_matrix, time_limit=time_limit))
     for name, spec in SOLVER_SPECS.items()
 }
 
@@ -55,7 +61,7 @@ def parse_args(raw_args: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--time-limit",
         type=float,
-        default=5.0,
+        default=10.0,
         help="Per-algorithm time budget in seconds.",
     )
     parser.add_argument(
@@ -81,17 +87,22 @@ def iter_jsonl(path: pathlib.Path) -> Iterator[dict]:
             yield json.loads(line)
 
 
-def load_existing_results(path: pathlib.Path) -> dict[tuple[str, str], dict]:
+def load_existing_results(path: pathlib.Path) -> tuple[dict[tuple[str, str], dict], dict[str, deque[str]]]:
     records: dict[tuple[str, str], dict] = {}
+    recent_failures: dict[str, deque[str]] = {}
     if not path.exists():
-        return records
+        return records, recent_failures
     for row in iter_jsonl(path):
         pid = row.get("problem_id")
         algo = row.get("algorithm")
+        status = row.get("status")
         if not pid or not algo:
             continue
         records[(pid, algo)] = row
-    return records
+        if status and status != "unsupported":
+            dq = recent_failures.setdefault(algo, deque(maxlen=15))
+            dq.append(status)
+    return records, recent_failures
 
 
 def ensure_problem_id(problem: dict) -> str:
@@ -266,61 +277,21 @@ def main(raw_args: Iterable[str] | None = None) -> int:
         raise SystemExit(f"Problem file not found: {args.problems}")
 
     selected_algorithms = args.algorithms or list(ALGORITHMS.keys())
-    existing = load_existing_results(args.results)
-    # Track per-algorithm buckets: if an entire city-count bucket was infeasible, skip larger buckets.
-    existing_bucket_counts: dict[tuple[str, int], dict[str, int]] = {}
-    for (pid, algo_name), record in existing.items():
-        num_cities = record.get("num_cities")
-        if not isinstance(num_cities, int):
-            continue
-        spec = ALGORITHM_SPECS.get(algo_name)
-        family_attr = getattr(spec, "family", None) if spec else None
-        family_name = family_attr.value if hasattr(family_attr, "value") else str(family_attr).lower()
-        if family_name in {"metaheuristic", "heuristic"}:
-            continue
-        key = (algo_name, num_cities)
-        bucket = existing_bucket_counts.setdefault(key, {"total": 0, "success": 0})
-        bucket["total"] += 1
-        if record.get("status") == "complete":
-            bucket["success"] += 1
-
-    infeasible_thresholds: dict[str, int] = {}
-    for (algo_name, nc), counts in existing_bucket_counts.items():
-        if counts["total"] > 0 and counts["success"] == 0:
-            current = infeasible_thresholds.get(algo_name)
-            infeasible_thresholds[algo_name] = nc if current is None else min(current, nc)
+    existing, recent_failures = load_existing_results(args.results)
+    try:
+        total_problems = sum(1 for _ in iter_jsonl(args.problems))
+    except Exception:
+        total_problems = None
     appended = 0
     reused = 0
     args.results.parent.mkdir(parents=True, exist_ok=True)
     memory_bytes = int(args.memory_limit * 1024 * 1024) if args.memory_limit else None
     iteration_tracker: dict[tuple[str, int], int] = {}
-    current_bucket_size: int | None = None
-    bucket_counts: dict[str, dict[str, int]] = {}
-
-    def finalize_bucket(bucket_size: int | None) -> None:
-        """If a bucket saw only infeasible results for an algorithm, set a skip threshold."""
-        if bucket_size is None:
-            return
-        for algo_name, counts in bucket_counts.items():
-            spec = ALGORITHM_SPECS.get(algo_name)
-            family_attr = getattr(spec, "family", None) if spec else None
-            family_name = family_attr.value if hasattr(family_attr, "value") else str(family_attr).lower()
-            if family_name in {"metaheuristic", "heuristic"}:
-                continue
-            total = counts.get("total", 0)
-            success = counts.get("success", 0)
-            if total > 0 and success == 0:
-                prev = infeasible_thresholds.get(algo_name)
-                infeasible_thresholds[algo_name] = bucket_size if prev is None else min(prev, bucket_size)
 
     with args.results.open("a", encoding="utf-8") as out:
-        for problem in iter_jsonl(args.problems):
+        for problem in tqdm(iter_jsonl(args.problems), total=total_problems, desc="Problems"):
             problem_id = ensure_problem_id(problem)
             num_cities = problem.get("num_cities")
-            if isinstance(num_cities, int) and num_cities != current_bucket_size:
-                finalize_bucket(current_bucket_size)
-                bucket_counts = {}
-                current_bucket_size = num_cities
             problem_type = problem.get("problem_type", "unknown")
             iteration_idx: int | None = None
             if isinstance(num_cities, int):
@@ -337,21 +308,12 @@ def main(raw_args: Iterable[str] | None = None) -> int:
                         f"{algo_name} on problem {problem_id}{context} -> cached ({existing[key].get('status')})"
                     )
                     continue
-                threshold = infeasible_thresholds.get(algo_name)
-                # Only skip if we already timed out on a strictly larger instance size and the algorithm is not a heuristic/metaheuristic.
-                family_attr = getattr(spec, "family", None) if spec else None
-                family_name = family_attr.value if hasattr(family_attr, "value") else str(family_attr).lower()
-                if (
-                    threshold is not None
-                    and isinstance(num_cities, int)
-                    and num_cities > threshold
-                    and family_name not in {"metaheuristic", "heuristic"}
-                ):
+                if algo_name in recent_failures and len(recent_failures[algo_name]) == 15 and all(s == "infeasible" for s in recent_failures[algo_name]):
                     record = base_record(problem, algo_name)
                     record.update(
                         {
                             "status": "infeasible",
-                            "reason": "prior_infeasible_bucket",
+                            "reason": "prior_threshold",
                         }
                     )
                     out.write(json.dumps(to_jsonable(record)))
@@ -392,16 +354,13 @@ def main(raw_args: Iterable[str] | None = None) -> int:
                 if not is_infeasible:
                     record["status"] = status_val or "complete"
                 success = record.get("status") == "complete"
-                # Track bucket stats for skipping only when an entire bucket failed.
-                if isinstance(num_cities, int):
-                    stats = bucket_counts.setdefault(algo_name, {"total": 0, "success": 0})
-                    stats["total"] += 1
-                    if success:
-                        stats["success"] += 1
                 out.write(json.dumps(to_jsonable(record)))
                 out.write("\n")
                 existing[key] = record
                 appended += 1
+                if record.get("status") != "unsupported":
+                    dq = recent_failures.setdefault(algo_name, deque(maxlen=15))
+                    dq.append(record.get("status") or "unknown")
                 print(f"{algo_name} on problem {problem_id}{context} -> {record.get('status')}")
 
     print(f"Completed {appended} new runs. Reused {reused} cached results.")

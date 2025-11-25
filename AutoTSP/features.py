@@ -31,6 +31,7 @@ class FeatureExtractor:
         features["is_metric"] = FeatureExtractor._is_metric(metric_hint, coords, dist_matrix, rng=rng)
 
         if coords is not None and len(coords) > 0:
+            # Raw geometric descriptors (scale-dependent).
             stds = np.std(coords, axis=0)
             features["std_dev_x"] = float(stds[0])
             features["std_dev_y"] = float(stds[1])
@@ -42,6 +43,20 @@ class FeatureExtractor:
             features["centroid_dispersion"] = dispersion
             features["landmark_10_dist"] = FeatureExtractor._landmark_distance(coords, metric_hint, rng)
             features["nn_probe_cost"] = FeatureExtractor._nn_probe_cost(coords, metric_hint)
+            # Scale-normalised descriptors (invariant to uniform rescaling).
+            norm_coords = FeatureExtractor._normalise_coords(coords)
+            if norm_coords is not None:
+                norm_stds = np.std(norm_coords, axis=0)
+                features["std_dev_x_norm"] = float(norm_stds[0])
+                features["std_dev_y_norm"] = float(norm_stds[1])
+                norm_span = norm_coords.max(axis=0) - norm_coords.min(axis=0)
+                features["bbox_area_norm"] = float(norm_span[0] * norm_span[1])
+                norm_centroid = norm_coords.mean(axis=0)
+                features["centroid_dispersion_norm"] = float(
+                    np.linalg.norm(norm_coords - norm_centroid, axis=1).mean()
+                )
+                features["landmark_10_dist_norm"] = FeatureExtractor._landmark_distance(norm_coords, metric_hint, rng)
+                features["nn_probe_cost_norm"] = FeatureExtractor._nn_probe_cost(norm_coords, metric_hint)
         elif dist_matrix is not None:
             # Fall back to distance-matrix-only approximations.
             features["std_dev_x"] = None
@@ -50,6 +65,19 @@ class FeatureExtractor:
             features["centroid_dispersion"] = None
             features["landmark_10_dist"] = FeatureExtractor._landmark_distance_from_matrix(dist_matrix, rng)
             features["nn_probe_cost"] = FeatureExtractor._nn_probe_cost_from_matrix(dist_matrix)
+            # Without coordinates we cannot derive spatial dispersion, but we can normalise the matrix itself.
+            features["std_dev_x_norm"] = None
+            features["std_dev_y_norm"] = None
+            features["bbox_area_norm"] = None
+            features["centroid_dispersion_norm"] = None
+            features["landmark_10_dist_norm"] = None
+            features["nn_probe_cost_norm"] = None
+            if dist_matrix.size > 0:
+                max_edge = float(np.max(dist_matrix))
+                if np.isfinite(max_edge) and max_edge > 0.0:
+                    norm_mat = dist_matrix / max_edge
+                    features["landmark_10_dist_norm"] = FeatureExtractor._landmark_distance_from_matrix(norm_mat, rng)
+                    features["nn_probe_cost_norm"] = FeatureExtractor._nn_probe_cost_from_matrix(norm_mat)
         else:
             features.update(
                 {
@@ -59,10 +87,23 @@ class FeatureExtractor:
                     "centroid_dispersion": None,
                     "landmark_10_dist": None,
                     "nn_probe_cost": None,
+                    "std_dev_x_norm": None,
+                    "std_dev_y_norm": None,
+                    "bbox_area_norm": None,
+                    "centroid_dispersion_norm": None,
+                    "landmark_10_dist_norm": None,
+                    "nn_probe_cost_norm": None,
                 }
             )
 
         elapsed = FeatureExtractor._now() - start
+        if features.get("nn_probe_cost") is not None and n_nodes > 0:
+            try:
+                features["nn_probe_cost_per_node"] = float(features["nn_probe_cost"]) / float(n_nodes)
+            except Exception:
+                features["nn_probe_cost_per_node"] = None
+        else:
+            features["nn_probe_cost_per_node"] = None
         return FeatureVector(values=features, elapsed=elapsed)
 
     @staticmethod
@@ -206,6 +247,16 @@ class FeatureExtractor:
             unvisited.remove(next_city)
         cost += float(dist_matrix[visited[-1], visited[0]])
         return cost
+
+    @staticmethod
+    def _normalise_coords(coords: np.ndarray) -> Optional[np.ndarray]:
+        """Normalise coordinates to the unit square to make geometric features scale-invariant."""
+        if coords.ndim != 2 or coords.shape[0] == 0:
+            return None
+        mins = coords.min(axis=0)
+        spans = coords.max(axis=0) - mins
+        spans[spans == 0] = 1.0  # avoid division by zero for degenerate axes
+        return (coords - mins) / spans
 
 
 __all__ = ["FeatureExtractor", "FeatureVector"]

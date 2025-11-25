@@ -12,8 +12,8 @@ import numpy as np
 
 
 INSTANCE_DATASETS_DIR = pathlib.Path(__file__).resolve().parents[1]
-DEFAULT_PROBLEMS_PATH = INSTANCE_DATASETS_DIR / "problems.jsonl"
-DEFAULT_OUTPUT_DIR = INSTANCE_DATASETS_DIR / "dataset statistics"
+DEFAULT_PROBLEMS_PATH = INSTANCE_DATASETS_DIR / "tsp_problems_combined.jsonl"
+DEFAULT_OUTPUT_DIR = INSTANCE_DATASETS_DIR / "dataset statistics/combined_stats"
 
 
 def parse_args(raw_args: Iterable[str] | None = None) -> argparse.Namespace:
