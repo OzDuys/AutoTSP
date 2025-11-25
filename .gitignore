@@ -128,3 +128,5 @@ Data/Instance Datasets/problems.jsonl
 Data/Instance Datasets/tsp_problems_combined.jsonl
 Data/Instance Datasets/tsp_problems_external.jsonl
 Data/Instance Datasets/tsp_problems_synth.jsonl
+Data/Instance Datasets/tsp_problems_test.jsonl
+Data/Instance Datasets/tsp_problems_train.jsonl
